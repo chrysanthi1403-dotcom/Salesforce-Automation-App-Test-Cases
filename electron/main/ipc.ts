@@ -87,9 +87,12 @@ export function registerIpcHandlers(getWindow: GetWindow): void {
     const w = getWindow()
     if (!w) return null
     const res = await dialog.showOpenDialog(w, {
-      title: 'Select UAT Excel file',
+      title: 'Select UAT test cases file',
       properties: ['openFile'],
-      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls', 'xlsm'] }]
+      filters: [
+        { name: 'Spreadsheets', extensions: ['xlsx', 'xls', 'xlsm', 'csv', 'tsv'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
     })
     if (res.canceled || res.filePaths.length === 0) return null
     return res.filePaths[0]
