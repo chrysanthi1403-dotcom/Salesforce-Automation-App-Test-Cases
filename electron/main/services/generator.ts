@@ -1,0 +1,219 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { LLMProvider } from './ai'
+import type { OrgMetadata } from './salesforce'
+import { summarizeMetadataForPrompt } from './salesforce'
+import type { OrgProfile, TestCase } from '../../../shared/types'
+
+const SYSTEM_PROMPT = `You are a senior Playwright + Salesforce QA engineer. Generate a single self-contained Playwright TypeScript spec that a non-technical user can watch execute in headed Chromium.
+
+Rules (strict):
+- Output ONLY valid TypeScript code, no markdown fences, no commentary.
+- Use ESM-style \`import { test, expect } from '@playwright/test'\`.
+- The script MUST read Salesforce credentials from process.env:
+  - SF_USERNAME, SF_PASSWORD, SF_SECURITY_TOKEN (optional, append to password), SF_LOGIN_URL.
+- Prefer deterministic Lightning-friendly locators in this order:
+  1. page.getByRole with accessible name
+  2. page.getByLabel(label)
+  3. page.getByText(text, { exact: false })
+  4. CSS selectors targeting lightning-* custom elements with [data-*] where stable
+- NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
+- NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
+- Wrap each logical step in test.step('N. action text', async () => { ... }).
+- For each step, take a screenshot named step-NN.png via page.screenshot.
+- For expected results, use expect(...) assertions derived from text content or toast messages.
+- The test should log in via the standard Salesforce login page at SF_LOGIN_URL.
+- Timeouts: set test.setTimeout(180000) at top.
+- The test title must be the test case title.
+- Do NOT hardcode API keys or passwords.
+
+Follow this skeleton:
+
+import { test, expect } from '@playwright/test'
+
+test.setTimeout(180000)
+
+test('<TITLE>', async ({ page }, testInfo) => {
+  const username = process.env.SF_USERNAME!
+  const password = (process.env.SF_PASSWORD ?? '') + (process.env.SF_SECURITY_TOKEN ?? '')
+  const loginUrl = process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com'
+
+  await test.step('0. login', async () => {
+    await page.goto(loginUrl)
+    await page.getByLabel('Username').fill(username)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: /log in/i }).click()
+    await expect(page).toHaveURL(/lightning\\.force\\.com/)
+  })
+
+  // ... steps ...
+})`
+
+export interface GenerateOptions {
+  outputDir: string
+  org: OrgProfile
+  metadata: OrgMetadata
+  testCases: TestCase[]
+  provider: LLMProvider
+  onProgress?: (msg: string, current: number, total: number, testCaseId: string) => void
+}
+
+export interface GeneratedSpec {
+  testCase: TestCase
+  filename: string
+  absolutePath: string
+  code: string
+}
+
+function sanitizeFilename(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+function buildUserPrompt(tc: TestCase, metaSummary: string, org: OrgProfile): string {
+  return `ORG CONTEXT:
+Login URL: ${org.loginUrl}
+${metaSummary}
+
+TEST CASE JSON:
+${JSON.stringify(tc, null, 2)}
+
+Produce a single Playwright .spec.ts file that performs these steps end-to-end. Each step must be wrapped in test.step and take a screenshot. Assert expected results with expect(). Use Lightning-friendly locators.`
+}
+
+export function stripCodeFences(text: string): string {
+  let t = text.trim()
+  if (t.startsWith('```')) {
+    t = t.replace(/^```(?:ts|typescript)?/i, '').replace(/```$/, '').trim()
+  }
+  return t
+}
+
+/**
+ * Lightweight guardrails that catch common bad patterns. Throws on violations
+ * so the caller can surface them to the user.
+ */
+export function lintGeneratedSpec(code: string): string[] {
+  const issues: string[] = []
+  if (!/from\s+['"]@playwright\/test['"]/.test(code)) {
+    issues.push('Missing Playwright import')
+  }
+  if (!/\btest\s*\(/.test(code)) {
+    issues.push('Missing test() block')
+  }
+  if (/page\.waitForTimeout\(\s*\d{3,}/.test(code)) {
+    issues.push('Hardcoded page.waitForTimeout is not allowed')
+  }
+  if (/process\.env\.SF_(USERNAME|PASSWORD)/.test(code) === false) {
+    issues.push('Credentials must be read from process.env.SF_USERNAME / SF_PASSWORD')
+  }
+  if (/sk-[A-Za-z0-9]{20,}/.test(code) || /AIza[0-9A-Za-z_-]{20,}/.test(code)) {
+    issues.push('Hardcoded API key detected')
+  }
+  return issues
+}
+
+export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpec[]> {
+  mkdirSync(opts.outputDir, { recursive: true })
+  const metaSummary = summarizeMetadataForPrompt(opts.metadata)
+  const results: GeneratedSpec[] = []
+
+  const total = opts.testCases.length
+  for (let i = 0; i < total; i++) {
+    const tc = opts.testCases[i]!
+    opts.onProgress?.(`Generating ${tc.title}`, i + 1, total, tc.id)
+
+    const raw = await opts.provider.generate({
+      system: SYSTEM_PROMPT,
+      prompt: buildUserPrompt(tc, metaSummary, opts.org),
+      maxTokens: 6000,
+      temperature: 0.15
+    })
+    const code = stripCodeFences(raw)
+    const issues = lintGeneratedSpec(code)
+    if (issues.length) {
+      // retry once with explicit repair instructions
+      const repaired = await opts.provider.generate({
+        system: SYSTEM_PROMPT,
+        prompt: `Your previous spec had these issues: ${issues.join(' | ')}. Regenerate the full spec correcting ALL issues.\n\n${buildUserPrompt(tc, metaSummary, opts.org)}`,
+        maxTokens: 6000,
+        temperature: 0.1
+      })
+      const repairedCode = stripCodeFences(repaired)
+      const stillBad = lintGeneratedSpec(repairedCode)
+      if (stillBad.length) {
+        throw new Error(
+          `Generated spec for "${tc.title}" failed lint after retry: ${stillBad.join(', ')}`
+        )
+      }
+      const filename = `${String(i + 1).padStart(2, '0')}-${sanitizeFilename(tc.id || tc.title)}.spec.ts`
+      const absolutePath = join(opts.outputDir, filename)
+      writeFileSync(absolutePath, repairedCode, 'utf8')
+      results.push({ testCase: tc, filename, absolutePath, code: repairedCode })
+      continue
+    }
+    const filename = `${String(i + 1).padStart(2, '0')}-${sanitizeFilename(tc.id || tc.title)}.spec.ts`
+    const absolutePath = join(opts.outputDir, filename)
+    writeFileSync(absolutePath, code, 'utf8')
+    results.push({ testCase: tc, filename, absolutePath, code })
+  }
+
+  return results
+}
+
+export function writeSupportFiles(outputDir: string, testCases: TestCase[]): void {
+  mkdirSync(outputDir, { recursive: true })
+  writeFileSync(
+    join(outputDir, 'playwright.config.ts'),
+    `import { defineConfig } from '@playwright/test'
+
+export default defineConfig({
+  testDir: '.',
+  timeout: 180_000,
+  fullyParallel: false,
+  workers: 1,
+  reporter: [['list'], ['json', { outputFile: 'report.json' }]],
+  use: {
+    headless: false,
+    viewport: { width: 1440, height: 900 },
+    screenshot: 'only-on-failure',
+    trace: 'on',
+    video: 'retain-on-failure'
+  }
+})
+`,
+    'utf8'
+  )
+  writeFileSync(
+    join(outputDir, 'test-cases.json'),
+    JSON.stringify({ testCases }, null, 2),
+    'utf8'
+  )
+  writeFileSync(
+    join(outputDir, 'README.md'),
+    `# Generated UAT Scripts
+
+Auto-generated Playwright tests. Do not edit by hand; regenerate from the source Excel file via the app.
+
+## Running
+
+Credentials are injected via environment variables by the runner:
+
+- \`SF_USERNAME\`
+- \`SF_PASSWORD\`
+- \`SF_SECURITY_TOKEN\` (optional)
+- \`SF_LOGIN_URL\`
+
+To run manually:
+
+\`\`\`bash
+SF_USERNAME=... SF_PASSWORD=... SF_LOGIN_URL=https://login.salesforce.com \\
+  npx playwright test --headed
+\`\`\`
+`,
+    'utf8'
+  )
+}

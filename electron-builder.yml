@@ -1,0 +1,36 @@
+appId: com.internal.sf-uat-auto-runner
+productName: Salesforce UAT Auto Runner
+directories:
+  buildResources: build
+  output: release
+files:
+  - 'out/**/*'
+  - 'package.json'
+  - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+  - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}'
+  - '!**/*.map'
+asarUnpack:
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+  - node_modules/@playwright/**
+  - node_modules/better-sqlite3/**
+  - node_modules/keytar/**
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  artifactName: '${productName}-${version}-${arch}.${ext}'
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: '${productName}-${version}-${arch}.${ext}'
+linux:
+  target:
+    - target: AppImage
+  artifactName: '${productName}-${version}-${arch}.${ext}'
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish: null
