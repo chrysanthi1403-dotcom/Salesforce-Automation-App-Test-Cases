@@ -11,6 +11,7 @@ const nodeRequire: NodeRequire = require
 import { RunsRepo, StepsRepo } from './history'
 import { SecretsService } from './secrets'
 import { evidenceDir } from './paths'
+import { appBrowsersPath } from './browsers'
 import type {
   OrgProfile,
   RunProgress,
@@ -157,6 +158,9 @@ export async function executeRun(
       NODE_OPTIONS: '',
       NODE_PATH: nodePath,
       ELECTRON_RUN_AS_NODE: '1',
+      // Force our app-managed Playwright browsers cache so parent shells
+      // (e.g. Cursor's sandbox) can't point us at an empty temp directory.
+      PLAYWRIGHT_BROWSERS_PATH: appBrowsersPath(),
       SF_USERNAME: opts.org.username,
       SF_PASSWORD: creds.password,
       SF_SECURITY_TOKEN: creds.securityToken ?? '',

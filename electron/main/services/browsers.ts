@@ -7,33 +7,42 @@ declare const require: NodeRequire
 const nodeRequire: NodeRequire = require
 
 /**
- * When the app is packaged, Playwright browsers aren't pre-installed. On first
- * launch we shell out to the bundled Playwright CLI to download Chromium into
- * userData/ms-playwright. On dev, developers run `npx playwright install`
- * themselves and this is a no-op.
+ * Returns the directory we want Playwright to use for its browser cache.
+ * Always under the app's userData, so we get a stable, app-controlled path
+ * regardless of what PLAYWRIGHT_BROWSERS_PATH the parent shell (e.g. the
+ * Cursor sandbox) may have pre-set.
+ */
+export function appBrowsersPath(): string {
+  return join(app.getPath('userData'), 'ms-playwright')
+}
+
+function hasChromium(dir: string): boolean {
+  if (!existsSync(dir)) return false
+  try {
+    return readdirSync(dir).some((e) => e.startsWith('chromium'))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Ensures Chromium exists in our app-managed browsers cache. Runs in both dev
+ * and packaged mode because parent environments (e.g. Cursor's sandbox) can
+ * override PLAYWRIGHT_BROWSERS_PATH to locations that don't have the browser.
  */
 export async function ensureChromiumInstalled(
   onLog: (line: string) => void
 ): Promise<void> {
-  if (!app.isPackaged) return
-
-  const browsersPath = join(app.getPath('userData'), 'ms-playwright')
+  const browsersPath = appBrowsersPath()
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath
-  if (existsSync(browsersPath)) {
-    try {
-      const entries = readdirSync(browsersPath)
-      if (entries.some((e) => e.startsWith('chromium'))) {
-        onLog('Chromium already present.')
-        return
-      }
-    } catch {
-      // continue to install
-    }
+  if (hasChromium(browsersPath)) {
+    onLog('Chromium already present.')
+    return
   }
 
   const pkgPath = nodeRequire.resolve('playwright/package.json')
   const cli = join(dirname(pkgPath), 'cli.js')
-  onLog('Installing bundled Chromium (first launch only)…')
+  onLog('Installing Chromium for Playwright (first launch only)…')
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [cli, 'install', 'chromium'], {
@@ -43,8 +52,8 @@ export async function ensureChromiumInstalled(
         PLAYWRIGHT_BROWSERS_PATH: browsersPath
       }
     })
-    child.stdout.on('data', (b: Buffer) => onLog(b.toString('utf8').trim()))
-    child.stderr.on('data', (b: Buffer) => onLog(b.toString('utf8').trim()))
+    child.stdout.on('data', (b: Buffer) => onLog(b.toString('utf8').trimEnd()))
+    child.stderr.on('data', (b: Buffer) => onLog(b.toString('utf8').trimEnd()))
     child.on('close', (code) =>
       code === 0
         ? resolve()
