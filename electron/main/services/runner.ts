@@ -49,14 +49,40 @@ function resolvePlaywrightCli(): string {
   }
 }
 
-export async function executeRun(opts: RunOptions): Promise<RunSummary> {
-  const creds = await SecretsService.getOrgCredentials(opts.org.id)
-  if (!creds) throw new Error(`No stored credentials for org ${opts.org.alias}`)
+/**
+ * Returns the directory that contains `@playwright/test` (and `playwright`),
+ * so we can inject it into NODE_PATH for the spawned Playwright run. Generated
+ * specs and their playwright.config.ts live outside the app bundle and have no
+ * local node_modules, so Node's default upward search would otherwise fail
+ * with MODULE_NOT_FOUND when importing '@playwright/test'.
+ */
+function resolveAppNodeModulesDir(): string | null {
+  try {
+    const pkgPath = nodeRequire.resolve('@playwright/test/package.json')
+    // @playwright/test/package.json -> @playwright/test -> @playwright -> node_modules
+    return dirname(dirname(dirname(pkgPath)))
+  } catch {
+    try {
+      const pkgPath = nodeRequire.resolve('playwright/package.json')
+      // playwright/package.json -> playwright -> node_modules
+      return dirname(dirname(pkgPath))
+    } catch {
+      return null
+    }
+  }
+}
 
+export interface PreparedRun {
+  runId: string
+  summary: RunSummary
+}
+
+/** Create the run row up-front so the renderer can navigate to RunDetail
+ *  before Playwright starts producing output. */
+export function prepareRun(opts: Omit<RunOptions, 'onProgress'>): PreparedRun {
   const runId = nanoid()
   const runEvidence = join(evidenceDir(), runId)
   mkdirSync(runEvidence, { recursive: true })
-
   const summary: RunSummary = {
     id: runId,
     importId: opts.importId,
@@ -71,8 +97,6 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
     errorMessage: null
   }
   RunsRepo.create(summary)
-  opts.onProgress({ runId, message: `Starting ${opts.testCase.title}`, status: 'running' })
-
   for (const step of opts.testCase.steps) {
     StepsRepo.upsert({
       id: `${runId}-${step.order}`,
@@ -87,6 +111,19 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
       finishedAt: null
     })
   }
+  return { runId, summary }
+}
+
+export async function executeRun(
+  opts: RunOptions & { prepared?: PreparedRun }
+): Promise<RunSummary> {
+  const creds = await SecretsService.getOrgCredentials(opts.org.id)
+  if (!creds) throw new Error(`No stored credentials for org ${opts.org.alias}`)
+
+  const prepared = opts.prepared ?? prepareRun(opts)
+  const { runId, summary } = prepared
+  const runEvidence = summary.evidenceDir
+  opts.onProgress({ runId, message: `Starting ${opts.testCase.title}`, status: 'running' })
 
   const cli = resolvePlaywrightCli()
   if (!existsSync(cli)) {
@@ -105,11 +142,20 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
   ]
   if (!opts.headless) args.push('--headed')
 
+  const appNodeModules = resolveAppNodeModulesDir()
+  const existingNodePath = process.env.NODE_PATH ?? ''
+  const nodePath = appNodeModules
+    ? existingNodePath
+      ? `${appNodeModules}${process.platform === 'win32' ? ';' : ':'}${existingNodePath}`
+      : appNodeModules
+    : existingNodePath
+
   const child = spawn(process.execPath, args, {
     cwd: opts.outputDir,
     env: {
       ...process.env,
       NODE_OPTIONS: '',
+      NODE_PATH: nodePath,
       ELECTRON_RUN_AS_NODE: '1',
       SF_USERNAME: opts.org.username,
       SF_PASSWORD: creds.password,
@@ -120,16 +166,18 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
   })
 
   let lastStatus: RunStatus = 'running'
-  let errorOutput = ''
+  let stdoutBuffer = ''
+  let stderrBuffer = ''
 
   child.stdout.on('data', (buf: Buffer) => {
     const text = buf.toString('utf8')
+    stdoutBuffer += text
     for (const line of text.split(/\r?\n/)) {
       if (!line.trim()) continue
       const stepMatch = line.match(/\d+\.\s*(.+)/)
       opts.onProgress({
         runId,
-        message: line.trim(),
+        message: line,
         status: 'running',
         stepOrder: stepMatch ? parseInt(stepMatch[0], 10) : undefined
       })
@@ -137,8 +185,9 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
   })
   child.stderr.on('data', (buf: Buffer) => {
     const text = buf.toString('utf8')
-    errorOutput += text
-    opts.onProgress({ runId, message: text.trim(), status: 'running' })
+    stderrBuffer += text
+    // Preserve multi-line Playwright stack traces by emitting whole chunks.
+    opts.onProgress({ runId, message: text.replace(/\r\n/g, '\n').trimEnd(), status: 'running' })
   })
 
   const exitCode: number = await new Promise((resolve) => {
@@ -151,12 +200,33 @@ export async function executeRun(opts: RunOptions): Promise<RunSummary> {
     opts.onProgress({ runId, message: 'Test passed', status: 'passed' })
   } else {
     lastStatus = 'failed'
-    RunsRepo.updateStatus(runId, 'failed', errorOutput.slice(-2000))
+    // Playwright prints test failures on stdout (not stderr) with --reporter=line,
+    // so combine both so the user always sees the cause.
+    const combined = buildFailureSummary(stdoutBuffer, stderrBuffer, exitCode)
+    RunsRepo.updateStatus(runId, 'failed', combined)
     opts.onProgress({ runId, message: `Test failed (exit ${exitCode})`, status: 'failed' })
+    if (combined) {
+      opts.onProgress({ runId, message: combined, status: 'failed' })
+    }
   }
 
   summary.status = lastStatus
   summary.finishedAt = new Date().toISOString()
-  summary.errorMessage = lastStatus === 'failed' ? errorOutput.slice(-2000) : null
+  summary.errorMessage =
+    lastStatus === 'failed' ? buildFailureSummary(stdoutBuffer, stderrBuffer, exitCode) : null
   return summary
+}
+
+function buildFailureSummary(stdout: string, stderr: string, exitCode: number): string {
+  const parts: string[] = []
+  if (stderr.trim()) {
+    parts.push(`stderr:\n${stderr.trim().slice(-2000)}`)
+  }
+  if (stdout.trim()) {
+    parts.push(`stdout:\n${stdout.trim().slice(-3000)}`)
+  }
+  if (!parts.length) {
+    parts.push(`Playwright exited with code ${exitCode} but produced no output.`)
+  }
+  return parts.join('\n\n')
 }

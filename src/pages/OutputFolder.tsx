@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { File, FolderOpen, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -21,6 +21,7 @@ interface TestCaseRef {
 
 export function OutputFolder(): JSX.Element {
   const { importId } = useParams<{ importId: string }>()
+  const navigate = useNavigate()
   const [imp, setImp] = useState<ImportSummary | null>(null)
   const [files, setFiles] = useState<FileEntry[]>([])
   const [selected, setSelected] = useState<FileEntry | null>(null)
@@ -62,7 +63,7 @@ export function OutputFolder(): JSX.Element {
     setRunning(tcId)
     try {
       const res = await window.api.runs.start({ importId, testCaseId: tcId })
-      window.location.hash = `#/runs/${res.runId}`
+      navigate(`/runs/${res.runId}`)
     } finally {
       setRunning(null)
     }

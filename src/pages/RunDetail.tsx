@@ -86,16 +86,24 @@ export function RunDetail(): JSX.Element {
         </CardContent>
       </Card>
 
+      {(run.status === 'failed' || run.status === 'error') && run.errorMessage && (
+        <Card>
+          <CardContent className="space-y-2 p-6">
+            <div className="text-sm font-medium text-destructive">Failure output</div>
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-destructive/10 p-4 font-mono text-xs leading-relaxed text-destructive">
+              {run.errorMessage}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="p-0">
           <div className="max-h-72 overflow-auto rounded-xl bg-secondary/50 p-4 font-mono text-xs leading-relaxed">
-            {log.length === 0 && run.errorMessage && (
-              <pre className="whitespace-pre-wrap text-destructive">{run.errorMessage}</pre>
-            )}
             {log.map((l, i) => (
-              <div key={i} className="text-muted-foreground">
+              <pre key={i} className="whitespace-pre-wrap text-muted-foreground">
                 {l}
-              </div>
+              </pre>
             ))}
             {log.length === 0 && !run.errorMessage && (
               <div className="text-muted-foreground">No live log — run has completed.</div>

@@ -17,7 +17,7 @@ import { SecretsService } from './services/secrets'
 import { SettingsService } from './services/settings'
 import { testConnection } from './services/salesforce'
 import { preparePipeline, runPipeline } from './services/pipeline'
-import { executeRun } from './services/runner'
+import { executeRun, prepareRun } from './services/runner'
 
 type GetWindow = () => BrowserWindow | null
 
@@ -230,28 +230,44 @@ export function registerIpcHandlers(getWindow: GetWindow): void {
         sendToRenderer(IpcChannels.runsProgress, p)
       }
 
-      const summary = await executeRun({
+      const testCase = {
+        id: tc.id,
+        title: tc.title,
+        preconditions: tc.preconditions ?? null,
+        postconditions: tc.postconditions ?? null,
+        steps: tc.steps.map((s) => ({
+          order: s.order,
+          action: s.action,
+          data: s.data ?? null,
+          expectedResult: s.expectedResult ?? null
+        }))
+      }
+
+      const runOptions = {
         importId: imp.id,
         org,
-        testCase: {
-          id: tc.id,
-          title: tc.title,
-          preconditions: tc.preconditions ?? null,
-          postconditions: tc.postconditions ?? null,
-          steps: tc.steps.map((s) => ({
-            order: s.order,
-            action: s.action,
-            data: s.data ?? null,
-            expectedResult: s.expectedResult ?? null
-          }))
-        },
+        testCase,
         specAbsolutePath: join(imp.outputDir, specFile),
         outputDir: imp.outputDir,
         slowMo: settings.slowMo,
-        headless: settings.headless,
-        onProgress: emit
-      })
-      return { runId: summary.id }
+        headless: settings.headless
+      }
+      const prepared = prepareRun(runOptions)
+
+      // Fire-and-forget: let the renderer navigate to RunDetail and stream
+      // progress while Playwright runs.
+      void (async () => {
+        try {
+          await executeRun({ ...runOptions, onProgress: emit, prepared })
+        } catch (err) {
+          const message = (err as Error).message || String(err)
+          console.error('Run failed to start:', err)
+          RunsRepo.updateStatus(prepared.runId, 'error', message)
+          emit({ runId: prepared.runId, message, status: 'error' })
+        }
+      })()
+
+      return { runId: prepared.runId }
     }
   )
 }
