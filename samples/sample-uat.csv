@@ -1,0 +1,10 @@
+Test Case ID,Title,Step,Action,Data,Expected Result
+TC-001,Login and open App Launcher,1,Log in to Salesforce with the provided user,,User lands on the Lightning home page
+TC-001,Login and open App Launcher,2,Click the App Launcher (waffle icon at top left),,The App Launcher panel opens
+TC-001,Login and open App Launcher,3,Type "Sales" in the App Launcher search box,Sales,The Sales app appears in the results
+TC-001,Login and open App Launcher,4,Press Escape to close the App Launcher,,The panel closes and focus returns to the home page
+TC-002,Create a Contact,1,From the App Launcher open the Contacts tab,,The Contacts list view is shown
+TC-002,Create a Contact,2,Click the New button to open the Contact creation form,,A modal dialog titled "New Contact" appears
+TC-002,Create a Contact,3,Fill in First Name and Last Name,"First Name=Test, Last Name=UAT Runner",The fields accept the values without validation errors
+TC-002,Create a Contact,4,Click Save,,The dialog closes and the newly created Contact detail page is shown with the name "Test UAT Runner"
+TC-002,Create a Contact,5,Verify the Contact appears on its detail page,,The page title contains "Test UAT Runner"
