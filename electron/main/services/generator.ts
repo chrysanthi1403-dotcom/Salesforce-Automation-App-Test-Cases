@@ -11,19 +11,74 @@ Rules (strict):
 - Output ONLY valid TypeScript code, no markdown fences, no commentary.
 - Use ESM-style \`import { test, expect } from '@playwright/test'\`.
 - The script MUST read Salesforce credentials from process.env:
-  - SF_USERNAME, SF_PASSWORD, SF_SECURITY_TOKEN (optional, append to password), SF_LOGIN_URL.
+  - SF_USERNAME  → typed into the Username field as-is.
+  - SF_PASSWORD  → typed into the Password field AS-IS. Do NOT concatenate
+    the security token. The security token is only for API logins, not
+    the web login form; appending it will produce an invalid password
+    and keep the page on login.salesforce.com.
+  - SF_LOGIN_URL → the login URL to start on.
+  - SF_SECURITY_TOKEN exists but MUST be ignored for UI login.
 - Prefer deterministic Lightning-friendly locators in this order:
-  1. page.getByRole with accessible name
+  1. page.getByRole with accessible name — use EXACT strings, not ambiguous
+     regexes. Lightning home/record pages often have "View All", "More",
+     "Save", "New" appearing multiple times, which triggers Playwright
+     strict-mode violations.
   2. page.getByLabel(label)
   3. page.getByText(text, { exact: false })
   4. CSS selectors targeting lightning-* custom elements with [data-*] where stable
+- When the same accessible name appears more than once (e.g. "View All"),
+  disambiguate by:
+  a. Using the FULL name (e.g. "View All Applications" instead of "View All"),
+  b. Scoping to a container: page.getByRole('dialog').getByRole('button', ...),
+     page.locator('one-app-launcher-modal').getByRole(...),
+  c. Or .first() / .nth(i) ONLY if the ordering is stable and documented.
+- ALWAYS prefer direct Lightning URL navigation over the App Launcher UI,
+  EVEN when the test step wording mentions "App Launcher", "navigate to",
+  "open the X tab", "go to Contacts", etc. The INTENT of such steps is to
+  reach the object list/record page; the UI path is an implementation
+  detail that is notoriously flaky in Developer Edition / fresh orgs
+  because the App Launcher search index takes seconds-to-minutes to warm
+  up and often never resolves. Use the post-login page origin to build
+  the URL:
+    const origin = new URL(page.url()).origin
+    await page.goto(origin + '/lightning/o/Contact/list')          // object list
+    await page.goto(origin + '/lightning/o/Contact/new')           // new record
+    await page.goto(origin + '/lightning/r/Contact/<id>/view')     // record detail
+    await page.goto(origin + '/lightning/setup/SetupOneHome/home') // setup
+  After page.goto(...) Salesforce often performs a 302 redirect through
+  my.salesforce.com with a startURL parameter before landing on
+  lightning.force.com, which can take 10-30s on a cold session. For that
+  reason, ALWAYS pair the goto with a waitForURL + an explicit timeout on
+  the assertion:
+    await page.waitForURL(/\\/lightning\\/o\\/Contact\\/list/, { timeout: 60000 })
+    await expect(page).toHaveURL(/\\/lightning\\/o\\/Contact\\/list/, { timeout: 60000 })
+  The default 5000ms is too short for Salesforce and WILL fail.
+- After any form submission that triggers navigation (Save, Submit, Log In, etc.)
+  use page.waitForURL with timeout: 60000 before asserting. Do NOT rely on
+  expect(page).toHaveURL(...) with the default timeout after such actions.
+- ONLY use the App Launcher UI path if the test step EXPLICITLY validates
+  App Launcher behaviour itself (e.g. "verify the App Launcher search
+  returns the Contacts app"). If you do, use this deterministic pattern
+  and wait for the spinner to disappear first:
+    await page.getByRole('button', { name: 'App Launcher' }).click()
+    const launcher = page.getByRole('dialog')
+    await launcher.getByRole('button', { name: 'View All Applications' }).click()
+    await expect(launcher.locator('.slds-spinner, lightning-spinner')).toHaveCount(0, { timeout: 30000 })
+    await launcher.getByRole('searchbox', { name: /Search apps/i }).fill('Contacts')
+    await launcher.getByRole('link', { name: 'Contacts', exact: true }).click()
 - NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
 - NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
 - Wrap each logical step in test.step('N. action text', async () => { ... }).
 - For each step, take a screenshot named step-NN.png via page.screenshot.
 - For expected results, use expect(...) assertions derived from text content or toast messages.
 - The test should log in via the standard Salesforce login page at SF_LOGIN_URL.
-- Timeouts: set test.setTimeout(180000) at top.
+- After clicking "Log In", wait for navigation AWAY from login.salesforce.com
+  (it can redirect to lightning.force.com, my.salesforce.com, or a
+  MyDomain subdomain). Before asserting the post-login URL, first check
+  whether an error like "Please check your username and password" is
+  visible — if so, fail with a clear message instead of timing out.
+- Timeouts: set test.setTimeout(180000) at top; give post-login navigation
+  up to 60000ms.
 - The test title must be the test case title.
 - Do NOT hardcode API keys or passwords.
 
@@ -34,8 +89,8 @@ import { test, expect } from '@playwright/test'
 test.setTimeout(180000)
 
 test('<TITLE>', async ({ page }, testInfo) => {
-  const username = process.env.SF_USERNAME!
-  const password = (process.env.SF_PASSWORD ?? '') + (process.env.SF_SECURITY_TOKEN ?? '')
+  const username = process.env.SF_USERNAME ?? ''
+  const password = process.env.SF_PASSWORD ?? ''
   const loginUrl = process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com'
 
   await test.step('0. login', async () => {
@@ -43,7 +98,19 @@ test('<TITLE>', async ({ page }, testInfo) => {
     await page.getByLabel('Username').fill(username)
     await page.getByLabel('Password').fill(password)
     await page.getByRole('button', { name: /log in/i }).click()
-    await expect(page).toHaveURL(/lightning\\.force\\.com/)
+
+    // Surface a readable failure if the credentials are wrong.
+    const errorLocator = page.locator('#error, .loginError, #errorDiv').first()
+    await Promise.race([
+      page.waitForURL((url) => !/login\\.salesforce\\.com/.test(url.hostname), {
+        timeout: 60000
+      }),
+      errorLocator.waitFor({ state: 'visible', timeout: 60000 }).then(async () => {
+        const msg = (await errorLocator.textContent())?.trim() || 'Salesforce login failed'
+        throw new Error('Salesforce login failed: ' + msg)
+      })
+    ])
+    await expect(page).not.toHaveURL(/login\\.salesforce\\.com/)
   })
 
   // ... steps ...
