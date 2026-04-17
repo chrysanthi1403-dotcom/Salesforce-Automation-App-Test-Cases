@@ -2,6 +2,7 @@ import type { AIConfig } from '../../../../shared/types'
 import { SecretsService } from '../secrets'
 import { AnthropicProvider } from './anthropic'
 import { GeminiProvider } from './gemini'
+import { OpenAIProvider } from './openai'
 import type { LLMProvider } from './types'
 
 export async function createProvider(cfg: AIConfig): Promise<LLMProvider> {
@@ -13,6 +14,7 @@ export async function createProvider(cfg: AIConfig): Promise<LLMProvider> {
   }
   if (cfg.provider === 'anthropic') return new AnthropicProvider(apiKey, cfg.model)
   if (cfg.provider === 'gemini') return new GeminiProvider(apiKey, cfg.model)
+  if (cfg.provider === 'openai') return new OpenAIProvider(apiKey, cfg.model)
   throw new Error(`Unknown provider: ${String(cfg.provider)}`)
 }
 

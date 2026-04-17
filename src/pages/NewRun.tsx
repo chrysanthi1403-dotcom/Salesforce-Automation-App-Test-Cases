@@ -189,6 +189,7 @@ export function NewRun(): JSX.Element {
                       <SelectContent>
                         <SelectItem value="anthropic">Claude (Anthropic)</SelectItem>
                         <SelectItem value="gemini">Gemini (Google)</SelectItem>
+                        <SelectItem value="openai">ChatGPT (OpenAI)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -199,7 +200,7 @@ export function NewRun(): JSX.Element {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {provider === 'anthropic' ? (
+                        {provider === 'anthropic' && (
                           <>
                             <SelectItem value="claude-sonnet-4-5">Claude Sonnet 4.5</SelectItem>
                             <SelectItem value="claude-opus-4-1">Claude Opus 4.1</SelectItem>
@@ -207,11 +208,21 @@ export function NewRun(): JSX.Element {
                               Claude 3.5 Sonnet
                             </SelectItem>
                           </>
-                        ) : (
+                        )}
+                        {provider === 'gemini' && (
                           <>
                             <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
                             <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
                             <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
+                          </>
+                        )}
+                        {provider === 'openai' && (
+                          <>
+                            <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                            <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
+                            <SelectItem value="gpt-4.1">GPT-4.1</SelectItem>
+                            <SelectItem value="gpt-4.1-mini">GPT-4.1 mini</SelectItem>
+                            <SelectItem value="o4-mini">o4-mini</SelectItem>
                           </>
                         )}
                       </SelectContent>

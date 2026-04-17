@@ -18,8 +18,10 @@ export function Settings(): JSX.Element {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [claudeKey, setClaudeKey] = useState('')
   const [geminiKey, setGeminiKey] = useState('')
+  const [openaiKey, setOpenaiKey] = useState('')
   const [claudeSaved, setClaudeSaved] = useState(false)
   const [geminiSaved, setGeminiSaved] = useState(false)
+  const [openaiSaved, setOpenaiSaved] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
 
   useEffect(() => {
@@ -27,6 +29,7 @@ export function Settings(): JSX.Element {
       setSettings(await window.api.settings.get())
       setClaudeSaved(await window.api.settings.hasApiKey('anthropic'))
       setGeminiSaved(await window.api.settings.hasApiKey('gemini'))
+      setOpenaiSaved(await window.api.settings.hasApiKey('openai'))
     })()
   }, [])
 
@@ -39,13 +42,18 @@ export function Settings(): JSX.Element {
 
   const saveKey = async (provider: AIProvider, value: string): Promise<void> => {
     await window.api.settings.setApiKey(provider, value)
-    setSavedMsg(`${provider === 'anthropic' ? 'Claude' : 'Gemini'} key saved.`)
+    const label =
+      provider === 'anthropic' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'OpenAI'
+    setSavedMsg(`${label} key saved.`)
     if (provider === 'anthropic') {
       setClaudeSaved(!!value)
       setClaudeKey('')
-    } else {
+    } else if (provider === 'gemini') {
       setGeminiSaved(!!value)
       setGeminiKey('')
+    } else {
+      setOpenaiSaved(!!value)
+      setOpenaiKey('')
     }
     setTimeout(() => setSavedMsg(null), 2000)
   }
@@ -82,6 +90,7 @@ export function Settings(): JSX.Element {
                 <SelectContent>
                   <SelectItem value="anthropic">Claude (Anthropic)</SelectItem>
                   <SelectItem value="gemini">Gemini (Google)</SelectItem>
+                  <SelectItem value="openai">ChatGPT (OpenAI)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -119,6 +128,18 @@ export function Settings(): JSX.Element {
                   onChange={(e) => setGeminiKey(e.target.value)}
                 />
                 <Button onClick={() => void saveKey('gemini', geminiKey)}>Save</Button>
+              </div>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>OpenAI API key {openaiSaved && '· stored'}</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={openaiKey}
+                  placeholder={openaiSaved ? '•••••••••••• (update)' : 'sk-…'}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                />
+                <Button onClick={() => void saveKey('openai', openaiKey)}>Save</Button>
               </div>
             </div>
           </div>

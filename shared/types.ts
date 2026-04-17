@@ -1,4 +1,4 @@
-export type AIProvider = 'anthropic' | 'gemini'
+export type AIProvider = 'anthropic' | 'gemini' | 'openai'
 
 export interface AIConfig {
   provider: AIProvider
@@ -7,7 +7,14 @@ export interface AIConfig {
 
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
   anthropic: 'claude-sonnet-4-5',
-  gemini: 'gemini-2.5-pro'
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o'
+}
+
+export const PROVIDER_LABELS: Record<AIProvider, string> = {
+  anthropic: 'Claude (Anthropic)',
+  gemini: 'Gemini (Google)',
+  openai: 'ChatGPT (OpenAI)'
 }
 
 export interface OrgProfile {

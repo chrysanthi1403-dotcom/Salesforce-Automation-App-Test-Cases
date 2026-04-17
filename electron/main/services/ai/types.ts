@@ -8,6 +8,6 @@ export interface LLMGenerateOptions {
 }
 
 export interface LLMProvider {
-  readonly name: 'anthropic' | 'gemini'
+  readonly name: 'anthropic' | 'gemini' | 'openai'
   generate(opts: LLMGenerateOptions): Promise<string>
 }
