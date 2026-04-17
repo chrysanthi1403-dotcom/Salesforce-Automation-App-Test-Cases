@@ -16,6 +16,9 @@ import type {
 } from '../../../shared/types'
 
 export interface PipelineOptions {
+  jobId: string
+  importId: string
+  outputDir: string
   orgId: string
   excelPath: string
   ai: AIConfig
@@ -29,8 +32,28 @@ export interface PipelineResult {
   suite: TestSuite
 }
 
-export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
+export interface PipelineHandle {
+  jobId: string
+  importId: string
+  outputDir: string
+}
+
+/**
+ * Prepare IDs + output dir up-front so the renderer can navigate to the
+ * progress page before the long-running pipeline kicks off.
+ */
+export function preparePipeline(orgId: string): PipelineHandle {
+  const org = OrgsRepo.get(orgId)
+  if (!org) throw new Error(`Org ${orgId} not found`)
   const jobId = nanoid()
+  const importId = nanoid()
+  const outputDir = join(generatedDir(), org.alias, importId)
+  mkdirSync(outputDir, { recursive: true })
+  return { jobId, importId, outputDir }
+}
+
+export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
+  const { jobId, importId, outputDir } = opts
   const emit = (
     stage: PipelineProgress['stage'],
     message: string,
@@ -51,10 +74,6 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
 
   emit('fetching_metadata', `Fetching Salesforce metadata for ${org.alias}`)
   const metadata = await fetchOrgMetadata(org)
-
-  const importId = nanoid()
-  const outputDir = join(generatedDir(), org.alias, importId)
-  mkdirSync(outputDir, { recursive: true })
 
   emit('generating', `Generating ${suite.testCases.length} Playwright specs`, {
     total: suite.testCases.length,

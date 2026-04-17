@@ -20,15 +20,23 @@ export function PipelineProgress(): JSX.Element {
   const importId = params.get('importId')
   const [events, setEvents] = useState<PP[]>([])
   const [currentStage, setCurrentStage] = useState<PP['stage']>('parsing_excel')
+  const [lastKnownStage, setLastKnownStage] = useState<PP['stage']>('parsing_excel')
   const [generation, setGeneration] = useState<{ current: number; total: number } | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const unsub = window.api.pipeline.onProgress((p) => {
       setEvents((prev) => [...prev, p])
       setCurrentStage(p.stage)
+      if (p.stage !== 'error' && p.stage !== 'done') {
+        setLastKnownStage(p.stage)
+      }
       if (p.stage === 'generating' && typeof p.current === 'number' && typeof p.total === 'number') {
         setGeneration({ current: p.current, total: p.total })
+      }
+      if (p.stage === 'error') {
+        setErrorMessage(p.message)
       }
       if (p.stage === 'done' && importId) {
         setTimeout(() => navigate(`/imports/${importId}`), 600)
@@ -41,8 +49,10 @@ export function PipelineProgress(): JSX.Element {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [events])
 
-  const stageIdx = STAGES.findIndex((s) => s.id === currentStage)
   const hasError = currentStage === 'error'
+  const stageIdx = STAGES.findIndex(
+    (s) => s.id === (hasError ? lastKnownStage : currentStage)
+  )
 
   return (
     <div className="space-y-6">
@@ -114,9 +124,27 @@ export function PipelineProgress(): JSX.Element {
       </Card>
 
       {hasError && (
-        <Button variant="outline" onClick={() => navigate('/new')}>
-          Try again
-        </Button>
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <div className="flex items-start gap-3">
+              <XCircle className="mt-0.5 h-5 w-5 text-destructive" />
+              <div className="space-y-1">
+                <div className="text-sm font-medium">Pipeline failed</div>
+                <div className="text-sm text-muted-foreground break-words whitespace-pre-wrap">
+                  {errorMessage ?? 'Unknown error'}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => navigate('/new')}>
+                Try again
+              </Button>
+              <Button variant="ghost" onClick={() => navigate('/orgs')}>
+                Check org credentials
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   )

@@ -16,7 +16,7 @@ import { ImportsRepo, OrgsRepo, RunsRepo, StepsRepo } from './services/history'
 import { SecretsService } from './services/secrets'
 import { SettingsService } from './services/settings'
 import { testConnection } from './services/salesforce'
-import { runPipeline } from './services/pipeline'
+import { preparePipeline, runPipeline } from './services/pipeline'
 import { executeRun } from './services/runner'
 
 type GetWindow = () => BrowserWindow | null
@@ -101,16 +101,38 @@ export function registerIpcHandlers(getWindow: GetWindow): void {
   ipcMain.handle(
     IpcChannels.pipelineNewRun,
     async (_evt, req: NewRunRequest): Promise<NewRunResponse> => {
+      const handle = preparePipeline(req.orgId)
       const emit = (p: PipelineProgress): void => {
         sendToRenderer(IpcChannels.pipelineProgress, p)
       }
-      const result = await runPipeline({
-        orgId: req.orgId,
-        excelPath: req.excelPath,
-        ai: req.ai,
-        onProgress: emit
-      })
-      return { jobId: result.jobId, importId: result.importId, outputDir: result.outputDir }
+      // Fire-and-forget: let the renderer navigate to the progress page while
+      // the long-running stages stream their events.
+      void (async () => {
+        try {
+          await runPipeline({
+            jobId: handle.jobId,
+            importId: handle.importId,
+            outputDir: handle.outputDir,
+            orgId: req.orgId,
+            excelPath: req.excelPath,
+            ai: req.ai,
+            onProgress: emit
+          })
+        } catch (err) {
+          const message = (err as Error).message || String(err)
+          console.error('Pipeline failed:', err)
+          emit({
+            jobId: handle.jobId,
+            stage: 'error',
+            message
+          })
+        }
+      })()
+      return {
+        jobId: handle.jobId,
+        importId: handle.importId,
+        outputDir: handle.outputDir
+      }
     }
   )
 
