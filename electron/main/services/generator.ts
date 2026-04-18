@@ -129,6 +129,29 @@ Rules (strict):
       await page.waitForURL(/\\/lightning\\/r\\/Contact\\/[0-9A-Za-z]{15,18}\\/view/, { timeout: 60000 })
   * Never pass { exact: false } when looking up Save / Cancel inside a
     modal — the exact label avoids picking up "Save & New" by accident.
+- SALESFORCE PRIMITIVES (use these first, before raw page.* calls). They
+  live in the sibling \`./_uat\` module and are stable across orgs:
+    uat.openList(page, 'Contact')                  // /lightning/o/Contact/list + waitForURL
+    uat.openNew(page, 'Contact')                   // /lightning/o/Contact/new  + modal visible
+    uat.modal(page, 'New Contact')                 // Locator scoped to that modal
+    uat.recordTitle(page)                          // record-detail title, NOT h1
+    await uat.waitForRecordView(page, 'Contact')   // wait for /lightning/r/Contact/<id>/view
+  Mandatory usage:
+  * Any navigation to a list view => uat.openList, never manual goto.
+  * Any navigation to a new-record form => uat.openNew, never manual goto.
+  * Any assertion about the record-detail title (e.g. "The page title
+    contains Test UAT Runner") => expect(uat.recordTitle(page)).toContainText('Test UAT Runner').
+    NEVER use page.locator('h1'), page.getByRole('heading', ...) or
+    page.getByText(...) at page scope for this — Lightning renders 3+ h1
+    elements (app name, breadcrumbs, list header, record title) so bare
+    heading locators ALWAYS strict-mode fail.
+  * When the test step references a "New Foo" / "Edit Foo" modal, bind a
+    const at the top of the step:
+       const modal = uat.modal(page, 'New Contact')
+    and then perform every click/fill through \`modal.getByXxx(...)\`.
+  * After Save, call \`await uat.waitForRecordView(page, '<ApiName>')\`
+    before any record-detail assertion. The record URL is the single
+    most reliable sign that creation succeeded.
 - SELF-HEALING WRAPPERS: alongside every generated spec there is a sibling
   file \`_uat.ts\` that exports \`uat.click\`, \`uat.fill\`, and \`uat.visible\`.
   These wrap a Playwright locator and, on failure, fall back to an AI
@@ -185,7 +208,25 @@ test('<TITLE>', async ({ page }, testInfo) => {
     await page.screenshot({ path: 'step-00.png' })
   })
 
-  // ... steps ...
+  // Example of a create-record step (adapt per test case):
+  //
+  // await test.step('2. Open Contacts and create a new one', async () => {
+  //   await uat.openNew(page, 'Contact')
+  //   const modal = uat.modal(page, 'New Contact')
+  //   await uat.fill(page, modal.getByLabel('First Name'), 'Test', {
+  //     description: 'Fill the "First Name" field in the "New Contact" modal'
+  //   })
+  //   await uat.fill(page, modal.getByLabel('Last Name'), 'UAT Runner', {
+  //     description: 'Fill the "Last Name" field in the "New Contact" modal'
+  //   })
+  //   await uat.click(page, modal.getByRole('button', { name: 'Save', exact: true }), {
+  //     description: 'Click "Save" in the "New Contact" modal'
+  //   })
+  //   await expect(modal).toBeHidden({ timeout: 30000 })
+  //   await uat.waitForRecordView(page, 'Contact')
+  //   await expect(uat.recordTitle(page)).toContainText('Test UAT Runner')
+  //   await page.screenshot({ path: 'step-02.png' })
+  // })
 })`
 
 export interface GenerateOptions {
@@ -298,6 +339,43 @@ export function lintGeneratedSpec(code: string, tc?: TestCase): string[] {
       'App Launcher UI navigation is forbidden for this test case. The App Launcher search index is unreliable in Developer Edition and causes the searchbox to never become interactable. Replace the entire App-Launcher flow with direct Lightning URL navigation: `const origin = new URL(page.url()).origin; await page.goto(origin + "/lightning/o/<Object>/list"); await page.waitForURL(/\\/lightning\\/o\\/<Object>\\/list/, { timeout: 60000 });`'
     )
   }
+
+  // Bare h1 / bare heading locators on the whole page always strict-mode
+  // fail on Salesforce Lightning (app name + breadcrumb + list + record).
+  // For record-title assertions the spec must use uat.recordTitle(page).
+  if (/page\.locator\(\s*['"]h1['"]\s*\)/.test(code)) {
+    issues.push(
+      'Do not use page.locator("h1") on Salesforce Lightning. Lightning renders multiple h1 elements (app name, breadcrumb, list header, record title). Use `uat.recordTitle(page)` for record-detail title assertions, or scope to a specific container when asserting other headings.'
+    )
+  }
+  if (/page\.getByRole\(\s*['"]heading['"]\s*(?:,\s*\{\s*name[^}]*\})?\s*\)(?!\s*\.(first|last|nth|filter))/.test(code)) {
+    issues.push(
+      'Page-wide page.getByRole("heading", ...) is unsafe on Lightning. Prefer `uat.recordTitle(page)` for record-detail titles, or scope the heading lookup (e.g. `modal.getByRole("heading", ...)`).'
+    )
+  }
+
+  // Save / Cancel / Save & New at page scope hit strict-mode because
+  // Salesforce renders the same button both in the modal footer and in
+  // the background record page. Force a modal scope.
+  const unscopedModalButton = /(?<!\.)page\.getByRole\(\s*['"]button['"]\s*,\s*\{\s*name:\s*['"](Save|Cancel|Save & New)['"][^}]*\}\s*\)(?!\s*\.(first|last|nth|filter|within|locator))/
+  if (unscopedModalButton.test(code)) {
+    issues.push(
+      'Save / Cancel / Save & New must be scoped to a modal. Build a modal const: `const modal = uat.modal(page, "New Contact")` then use `modal.getByRole("button", { name: "Save", exact: true })`. Page-wide lookups collide with duplicate buttons on the background record page.'
+    )
+  }
+
+  // The prompt mandates uat.openList / uat.openNew for object navigation;
+  // a spec that manually constructs /lightning/o/... URLs is allowed but
+  // much easier to get wrong. Warn (as an issue so the LLM regenerates)
+  // when we see goto with /lightning/o/ AND no matching waitForURL.
+  const manualObjectGoto = /page\.goto\([^)]*\/lightning\/o\//.test(code)
+  const hasWaitForURL = /page\.waitForURL\(/.test(code)
+  if (manualObjectGoto && !hasWaitForURL) {
+    issues.push(
+      'Manual /lightning/o/... navigation requires a subsequent page.waitForURL(...) with timeout: 60000 to survive the Salesforce 302 redirect. Prefer `await uat.openList(page, "<ApiName>")` or `await uat.openNew(page, "<ApiName>")` which handle this for you.'
+    )
+  }
+
   return issues
 }
 

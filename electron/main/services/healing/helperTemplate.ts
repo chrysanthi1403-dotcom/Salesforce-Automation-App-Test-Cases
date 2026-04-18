@@ -39,7 +39,7 @@ const AI_PROVIDER = (process.env.SF_AI_PROVIDER ?? '') as 'anthropic' | 'openai'
 const AI_API_KEY = process.env.SF_AI_API_KEY ?? ''
 const AI_MODEL = process.env.SF_AI_VISION_MODEL ?? process.env.SF_AI_MODEL ?? ''
 
-const SYSTEM_PROMPT = \`You are a Playwright locator assistant. Given a screenshot of a Salesforce Lightning page and a natural-language description of the UI element the caller wants to interact with, respond ONLY with a single JSON object describing the best way to find that element with Playwright.
+const SYSTEM_PROMPT = \`You are a Playwright locator assistant for Salesforce Lightning. Given a screenshot and a natural-language description of the UI element the caller wants to interact with, respond ONLY with a single JSON object describing the best way to find that element with Playwright.
 
 Valid response shapes:
 {"strategy":"role","role":"button","name":"Exact accessible name","exact":true}
@@ -52,9 +52,12 @@ Valid response shapes:
 
 Rules:
 - Prefer role > label > text > placeholder > css > xpath > coordinates.
-- "name" must be the EXACT visible string visible in the screenshot.
-- If multiple elements share the same role+name, add "nth" (0-based).
+- "name" must be the EXACT visible string shown in the screenshot.
+- If multiple elements share the same role+name, add "nth" (0-based) OR, much better, switch strategy to css with a scoping selector (e.g. "section[role=dialog] button.slds-button_brand").
 - Never invent numeric IDs.
+- DIVERSIFY between retries. If the FAILED ATTEMPTS list already contains a given strategy+name, pick a DIFFERENT strategy this turn. Never return a hint that is byte-identical to one that already failed.
+- For Salesforce Lightning duplicates (Save, Cancel, New, Edit) PREFER a scoped css selector like "section[role=dialog] .modal-footer button.slds-button_brand" over nth().
+- For record detail titles use "records-highlights-details-item lightning-formatted-name" or ".slds-page-header__name-title", never "h1".
 - Respond with ONLY the JSON, no prose, no code fences.\`
 
 function logHeal(message: string): void {
@@ -249,6 +252,8 @@ async function applyHint(
   else throw new Error('Unsupported action in applyHint: ' + action)
 }
 
+const MAX_VISION_ATTEMPTS_PER_CALL = 2
+
 async function healAndRetry<T>(
   page: Page,
   description: string,
@@ -270,11 +275,29 @@ async function healAndRetry<T>(
     await original()
     return undefined as unknown as T
   } catch (firstErr) {
-    previous.push(String((firstErr as Error).message ?? firstErr).slice(0, 300))
+    previous.push('original locator: ' + String((firstErr as Error).message ?? firstErr).slice(0, 300))
   }
-  const hint = await askVision(page, description, action, previous)
-  logHeal('vision suggested: ' + JSON.stringify(hint))
-  return apply(hint)
+
+  let lastErr: Error | null = null
+  for (let attempt = 1; attempt <= MAX_VISION_ATTEMPTS_PER_CALL; attempt++) {
+    const hint = await askVision(page, description, action, previous)
+    const hintKey = JSON.stringify(hint)
+    logHeal('vision attempt ' + attempt + ' suggested: ' + hintKey)
+    if (previous.some((p) => p.includes(hintKey))) {
+      // Vision gave us a duplicate — signal more forcefully and bail.
+      previous.push('duplicate suggestion: ' + hintKey)
+      lastErr = new Error('Vision kept returning the same failing hint: ' + hintKey)
+      continue
+    }
+    try {
+      const result = await apply(hint)
+      return result
+    } catch (e) {
+      lastErr = e as Error
+      previous.push('attempt ' + attempt + ' hint ' + hintKey + ' failed: ' + String(lastErr.message ?? lastErr).slice(0, 200))
+    }
+  }
+  throw lastErr ?? new Error('[uat] vision retries exhausted for: ' + description)
 }
 
 /**
@@ -392,6 +415,72 @@ export const uat = {
         }
       )
     }
+  },
+
+  /**
+   * Returns a Locator scoped to the top-most visible Salesforce Lightning
+   * modal. Use this for every click / fill that belongs to a "New" or
+   * "Edit" modal so duplicate buttons on the background record page don't
+   * trigger strict-mode violations.
+   *
+   *   const modal = uat.modal(page, 'New Contact')
+   *   await uat.click(page, modal.getByRole('button', { name: 'Save', exact: true }), { description: 'Click "Save" in the "New Contact" modal' })
+   */
+  modal(page: Page, titleFragment?: string): Locator {
+    const all = page.getByRole('dialog')
+    if (!titleFragment) return all.last()
+    const re = new RegExp(titleFragment.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'), 'i')
+    return all.filter({ hasText: re }).last()
+  },
+
+  /**
+   * Locator for the primary title of a Salesforce record-detail page. Uses
+   * Lightning-specific selectors that are stable across orgs; NEVER rely
+   * on a bare page.locator('h1') — Lightning renders multiple h1 elements
+   * (app name, breadcrumbs, list, …) and that will always strict-mode fail.
+   */
+  recordTitle(page: Page): Locator {
+    return page
+      .locator(
+        'records-highlights-details-item lightning-formatted-name, ' +
+          'records-entity-label, ' +
+          '.slds-page-header__name-title, ' +
+          'h1.slds-page-header__title'
+      )
+      .first()
+  },
+
+  /**
+   * Waits until the browser is on a Lightning record-view URL for the
+   * given sObject. Use AFTER a Save to confirm the record was created.
+   *
+   *   await uat.waitForRecordView(page, 'Contact')
+   */
+  async waitForRecordView(page: Page, apiName: string): Promise<void> {
+    const re = new RegExp('/lightning/r/' + apiName + '/[0-9A-Za-z]{15,18}/view')
+    await page.waitForURL(re, { timeout: 60000 })
+  },
+
+  /**
+   * Navigate directly to the Lightning list view for the given object's
+   * API name. Waits up to 60s for Salesforce's 302 redirect dance to
+   * finish before returning.
+   */
+  async openList(page: Page, apiName: string): Promise<void> {
+    const origin = new URL(page.url()).origin
+    await page.goto(origin + '/lightning/o/' + apiName + '/list')
+    const re = new RegExp('/lightning/o/' + apiName + '/list')
+    await page.waitForURL(re, { timeout: 60000 })
+  },
+
+  /**
+   * Navigate directly to the Lightning "new record" modal URL for the
+   * given object's API name. Waits for the modal to become visible.
+   */
+  async openNew(page: Page, apiName: string): Promise<void> {
+    const origin = new URL(page.url()).origin
+    await page.goto(origin + '/lightning/o/' + apiName + '/new')
+    await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 60000 })
   },
 
   /**
