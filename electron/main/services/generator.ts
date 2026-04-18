@@ -187,7 +187,25 @@ export function stripCodeFences(text: string): string {
  * Lightweight guardrails that catch common bad patterns. Throws on violations
  * so the caller can surface them to the user.
  */
-export function lintGeneratedSpec(code: string): string[] {
+/**
+ * Returns true when the test case itself is about the App Launcher UI,
+ * so we should allow (rather than reject) App Launcher locators in the
+ * generated spec. Without this exception a test case literally titled
+ * "open App Launcher" would be impossible to implement.
+ */
+function testCaseTargetsAppLauncher(tc?: TestCase): boolean {
+  if (!tc) return false
+  const haystack = [
+    tc.title,
+    tc.preconditions ?? '',
+    ...tc.steps.flatMap((s) => [s.action, s.expectedResult ?? ''])
+  ]
+    .join('\n')
+    .toLowerCase()
+  return /\bapp\s*launcher\b/.test(haystack)
+}
+
+export function lintGeneratedSpec(code: string, tc?: TestCase): string[] {
   const issues: string[] = []
   if (!/from\s+['"]@playwright\/test['"]/.test(code)) {
     issues.push('Missing Playwright import')
@@ -211,9 +229,16 @@ export function lintGeneratedSpec(code: string): string[] {
   if (/sk-[A-Za-z0-9]{20,}/.test(code) || /AIza[0-9A-Za-z_-]{20,}/.test(code)) {
     issues.push('Hardcoded API key detected')
   }
-  if (/getByRole\(\s*['"]button['"]\s*,\s*\{\s*name:\s*['"]App Launcher['"]/.test(code)) {
+  // Only block App Launcher clicks when the test case has NOTHING to do
+  // with the App Launcher — in that scenario the LLM used it as a flaky
+  // navigation shortcut for steps like "open the Contacts tab". If the
+  // user actually wrote a test about the App Launcher, let it through.
+  if (
+    !testCaseTargetsAppLauncher(tc) &&
+    /getByRole\(\s*['"]button['"]\s*,\s*\{\s*name:\s*['"]App Launcher['"]/.test(code)
+  ) {
     issues.push(
-      'App Launcher UI navigation is forbidden. The App Launcher search index is unreliable in Developer Edition and causes the searchbox to never become interactable. Replace the entire App-Launcher flow with direct Lightning URL navigation: `const origin = new URL(page.url()).origin; await page.goto(origin + "/lightning/o/<Object>/list"); await page.waitForURL(/\\/lightning\\/o\\/<Object>\\/list/, { timeout: 60000 });`'
+      'App Launcher UI navigation is forbidden for this test case. The App Launcher search index is unreliable in Developer Edition and causes the searchbox to never become interactable. Replace the entire App-Launcher flow with direct Lightning URL navigation: `const origin = new URL(page.url()).origin; await page.goto(origin + "/lightning/o/<Object>/list"); await page.waitForURL(/\\/lightning\\/o\\/<Object>\\/list/, { timeout: 60000 });`'
     )
   }
   return issues
@@ -238,7 +263,7 @@ export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpe
       temperature: 0.15
     })
     const code = stripCodeFences(raw)
-    const issues = lintGeneratedSpec(code)
+    const issues = lintGeneratedSpec(code, tc)
     if (issues.length) {
       // retry once with explicit repair instructions
       const repaired = await opts.provider.generate({
@@ -248,7 +273,7 @@ export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpe
         temperature: 0.1
       })
       const repairedCode = stripCodeFences(repaired)
-      const stillBad = lintGeneratedSpec(repairedCode)
+      const stillBad = lintGeneratedSpec(repairedCode, tc)
       if (stillBad.length) {
         throw new Error(
           `Generated spec for "${tc.title}" failed lint after retry: ${stillBad.join(', ')}`
