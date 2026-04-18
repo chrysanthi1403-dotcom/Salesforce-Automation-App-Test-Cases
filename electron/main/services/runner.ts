@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { mkdirSync, existsSync } from 'node:fs'
+import { mkdirSync, existsSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { nanoid } from 'nanoid'
+import { HELPER_FILENAME, HELPER_TEMPLATE } from './healing/helperTemplate'
 
 // electron-vite outputs CJS for the main process, so Node's built-in `require`
 // is available at runtime. We keep the reference locally so the TS checker
@@ -127,6 +128,19 @@ export async function executeRun(
   const { runId, summary } = prepared
   const runEvidence = summary.evidenceDir
   opts.onProgress({ runId, message: `Starting ${opts.testCase.title}`, status: 'running' })
+
+  // Re-sync the _uat.ts helper on every run so imports created with an
+  // older app version (no highlight, no robust fill, no pacing) pick up
+  // the latest runtime behaviour without forcing the user to re-import.
+  try {
+    writeFileSync(join(opts.outputDir, HELPER_FILENAME), HELPER_TEMPLATE, 'utf8')
+  } catch (e) {
+    opts.onProgress({
+      runId,
+      message: `Warning: could not refresh _uat.ts (${(e as Error).message}).`,
+      status: 'running'
+    })
+  }
 
   const cli = resolvePlaywrightCli()
   if (!existsSync(cli)) {

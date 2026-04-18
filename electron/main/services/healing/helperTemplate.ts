@@ -47,9 +47,13 @@ const AI_MODEL = process.env.SF_AI_VISION_MODEL ?? process.env.SF_AI_MODEL ?? ''
  * no value and Salesforce re-renders on every keystroke in lwc fields,
  * which would make "slow typing" painful.
  */
-const CLICK_PAUSE_MS = Number(process.env.SF_UAT_CLICK_PAUSE_MS ?? '600')
-const POST_CLICK_PAUSE_MS = Number(process.env.SF_UAT_POST_CLICK_PAUSE_MS ?? '250')
-const HIGHLIGHT_MS = Number(process.env.SF_UAT_HIGHLIGHT_MS ?? '500')
+const CLICK_PAUSE_MS = Number(process.env.SF_UAT_CLICK_PAUSE_MS ?? '700')
+const POST_CLICK_PAUSE_MS = Number(process.env.SF_UAT_POST_CLICK_PAUSE_MS ?? '300')
+const HIGHLIGHT_MS = Number(process.env.SF_UAT_HIGHLIGHT_MS ?? '700')
+
+console.log(
+  '[uat-pace] click=' + CLICK_PAUSE_MS + 'ms post=' + POST_CLICK_PAUSE_MS + 'ms highlight=' + HIGHLIGHT_MS + 'ms'
+)
 
 async function sleep(ms: number): Promise<void> {
   if (ms <= 0) return
@@ -299,7 +303,7 @@ async function applyHint(
   const loc = buildLocator(page, hint)
   if (!loc) throw new Error('Could not build locator from vision hint: ' + JSON.stringify(hint))
   if (action === 'click') await loc.click({ timeout: 15000 })
-  else if (action === 'fill' && typeof value === 'string') await loc.fill(value, { timeout: 15000 })
+  else if (action === 'fill' && typeof value === 'string') await robustFill(page, loc, value, 15000)
   else if (action === 'locate') await loc.waitFor({ state: 'visible', timeout: 15000 })
   else throw new Error('Unsupported action in applyHint: ' + action)
 }
@@ -353,6 +357,103 @@ async function healAndRetry<T>(
 }
 
 /**
+ * Fill a Salesforce Lightning field in a way that actually sticks.
+ *
+ * Plain \`locator.fill(value)\` often silently no-ops when the matched
+ * element is the outer \`lightning-input\` wrapper rather than the real
+ * \`<input>\` inside its shadow/light DOM. When that happens Playwright
+ * does not throw — the test just quietly moves on with an empty field
+ * and Save fails down the line with "field is required".
+ *
+ * Strategy:
+ *  1. Resolve the locator down to a concrete typable descendant
+ *     (\`input\`, \`textarea\`, or \`[contenteditable="true"]\`) when the
+ *     matched element itself is not typable.
+ *  2. Click to focus, Ctrl/Cmd+A to select any existing value, then
+ *     \`fill\` the full string in one shot (instant, but reliable).
+ *  3. Verify via \`inputValue\` / \`textContent\` and retry with
+ *     \`pressSequentially\` as a last resort.
+ */
+async function robustFill(
+  page: Page,
+  locator: Locator,
+  value: string,
+  timeout: number
+): Promise<void> {
+  const typable = await resolveTypableTarget(locator)
+  try {
+    await typable.click({ timeout })
+  } catch {
+    // Some Salesforce fields steal focus; proceed anyway.
+  }
+  try {
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+    await page.keyboard.press(modifier + '+A')
+    await page.keyboard.press('Delete')
+  } catch {
+    // Ignore — we'll rely on fill() to overwrite.
+  }
+  try {
+    await typable.fill(value, { timeout })
+  } catch {
+    // Fall through to sequential typing below.
+  }
+  const actual = await readFieldValue(typable).catch(() => '')
+  if (actual === value) return
+  try {
+    await typable.focus({ timeout: 2000 })
+  } catch {
+    // Ignore focus errors.
+  }
+  await page.keyboard.type(value)
+  const retry = await readFieldValue(typable).catch(() => '')
+  if (retry === value) return
+  throw new Error(
+    'Failed to populate field (got ' +
+      JSON.stringify(retry) +
+      ', expected ' +
+      JSON.stringify(value) +
+      '). The locator probably matched a wrapper element instead of the real input.'
+  )
+}
+
+/**
+ * Given a locator that may point at a \`lightning-input\` / \`lightning-combobox\`
+ * / label element, return a locator that points at a real typable
+ * descendant. Falls back to the original locator when nothing matches.
+ */
+async function resolveTypableTarget(locator: Locator): Promise<Locator> {
+  try {
+    const tagName = await locator.evaluate((el) => (el as Element).tagName.toLowerCase())
+    if (tagName === 'input' || tagName === 'textarea') return locator
+    if (tagName === 'div') {
+      const editable = await locator.evaluate((el) =>
+        (el as HTMLElement).isContentEditable
+      )
+      if (editable) return locator
+    }
+  } catch {
+    // If we can't evaluate, just search for a typable descendant below.
+  }
+  const descendant = locator.locator('input, textarea, [contenteditable="true"]').first()
+  if (await descendant.count().catch(() => 0)) return descendant
+  return locator
+}
+
+async function readFieldValue(locator: Locator): Promise<string> {
+  try {
+    return await locator.inputValue({ timeout: 1500 })
+  } catch {
+    // Content-editable / non-input elements.
+  }
+  try {
+    return (await locator.textContent({ timeout: 1500 })) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Cheap deterministic retries before burning a vision call. Salesforce
  * renders duplicates of common buttons (Save, Cancel, New) both inside
  * the modal AND on the background record page. Scoping to the top-most
@@ -380,7 +481,7 @@ async function scopedFallback(
     if (action === 'fill' && typeof value === 'string') {
       const input = dialog.getByLabel(name).first()
       if (await input.count() === 0) return false
-      await input.fill(value, { timeout: 10000 })
+      await robustFill(page, input, value, 10000)
       logHeal('scoped-fallback (dialog label "' + name + '") handled: ' + description)
       return true
     }
@@ -436,7 +537,7 @@ export const uat = {
       // Highlight so the user knows which field got filled, but no pause
       // before the fill itself — typing should be instant.
       await highlight(locator)
-      await locator.fill(value, { timeout: opts.timeout ?? 10000 })
+      await robustFill(page, locator, value, opts.timeout ?? 10000)
       return
     } catch (err) {
       if (await scopedFallback(page, 'fill', opts.description, value)) return
