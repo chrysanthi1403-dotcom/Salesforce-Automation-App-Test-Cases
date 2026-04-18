@@ -135,12 +135,27 @@ export interface SelfHealingConfig {
   maxFallbacksPerRun: number
 }
 
+/**
+ * How the generated Playwright specs authenticate against Salesforce.
+ *
+ * - `frontdoor`: the runner logs in via the jsforce SOAP API (password +
+ *   security token) BEFORE Playwright starts, then navigates straight to
+ *   `<instanceUrl>/secur/frontdoor.jsp?sid=<sessionId>`. This bypasses the
+ *   human login form entirely (no email verification, no MFA, no incognito
+ *   "Verify your identity" page). Strongly recommended.
+ * - `form`: Playwright types the credentials into the standard Salesforce
+ *   login form. Useful only when the test case explicitly validates the
+ *   login UI itself.
+ */
+export type LoginMode = 'frontdoor' | 'form'
+
 export interface AppSettings {
   ai: AIConfig
   slowMo: number
   headless: boolean
   theme: 'light' | 'dark' | 'system'
   selfHealing: SelfHealingConfig
+  loginMode: LoginMode
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -148,7 +163,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   slowMo: 250,
   headless: false,
   theme: 'system',
-  selfHealing: { enabled: false, maxFallbacksPerRun: 6 }
+  selfHealing: { enabled: false, maxFallbacksPerRun: 6 },
+  loginMode: 'frontdoor'
 }
 
 /**

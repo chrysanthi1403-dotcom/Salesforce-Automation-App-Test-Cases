@@ -13,6 +13,7 @@ import { SecretsService } from './secrets'
 import { SettingsService } from './settings'
 import { evidenceDir } from './paths'
 import { appBrowsersPath } from './browsers'
+import { getFrontdoorSession } from './salesforce'
 import type {
   OrgProfile,
   RunProgress,
@@ -159,6 +160,36 @@ export async function executeRun(
     aiKey = (await SecretsService.getApiKey(settings.ai.provider)) ?? ''
   }
 
+  // Frontdoor login: authenticate via SOAP API BEFORE Playwright starts and
+  // pass the session to the child so the generated spec can hit
+  // /secur/frontdoor.jsp?sid=... and skip the human login flow (no email
+  // verification, no MFA, no "Verify your identity"). Falls back silently to
+  // form login if the setting is off or the API login fails.
+  const loginMode = settings.loginMode ?? 'frontdoor'
+  let sessionId = ''
+  let sessionInstanceUrl = ''
+  if (loginMode === 'frontdoor') {
+    try {
+      opts.onProgress({
+        runId,
+        message: 'Authenticating via Salesforce API (frontdoor)…',
+        status: 'running'
+      })
+      const session = await getFrontdoorSession(opts.org)
+      sessionId = session.sessionId
+      sessionInstanceUrl = session.instanceUrl
+    } catch (e) {
+      const msg = (e as Error).message
+      opts.onProgress({
+        runId,
+        message:
+          `Frontdoor session could not be obtained (${msg}). ` +
+          `Falling back to form login — you may need to approve a verification challenge.`,
+        status: 'running'
+      })
+    }
+  }
+
   const child = spawn(process.execPath, args, {
     cwd: opts.outputDir,
     env: {
@@ -173,6 +204,11 @@ export async function executeRun(
       SF_PASSWORD: creds.password,
       SF_SECURITY_TOKEN: creds.securityToken ?? '',
       SF_LOGIN_URL: opts.org.loginUrl,
+      // Frontdoor fast path. When these are set, the generated login helper
+      // navigates straight to the authenticated Lightning app.
+      SF_SESSION_ID: sessionId,
+      SF_INSTANCE_URL: sessionInstanceUrl,
+      SF_LOGIN_MODE: loginMode,
       PW_SLOW_MO: String(opts.slowMo),
       // Self-healing (vision fallback) — read by the _uat.ts helper.
       SF_AI_HEALING_ENABLED: healingEnabled && aiKey ? '1' : '0',

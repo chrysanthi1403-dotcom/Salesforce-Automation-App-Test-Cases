@@ -12,14 +12,20 @@ const SYSTEM_PROMPT = `You are a senior Playwright + Salesforce QA engineer. Gen
 Rules (strict):
 - Output ONLY valid TypeScript code, no markdown fences, no commentary.
 - Use ESM-style \`import { test, expect } from '@playwright/test'\`.
-- The script MUST read Salesforce credentials from process.env:
-  - SF_USERNAME  → typed into the Username field as-is.
-  - SF_PASSWORD  → typed into the Password field AS-IS. Do NOT concatenate
-    the security token. The security token is only for API logins, not
-    the web login form; appending it will produce an invalid password
-    and keep the page on login.salesforce.com.
-  - SF_LOGIN_URL → the login URL to start on.
-  - SF_SECURITY_TOKEN exists but MUST be ignored for UI login.
+- Import the UAT helpers: \`import { uat } from './_uat'\`.
+- LOGIN: do NOT type usernames/passwords yourself. ALWAYS start the spec with
+  \`await uat.login(page)\` inside the first test.step. The helper picks the
+  right strategy automatically:
+    * Frontdoor fast path when the runner supplies SF_SESSION_ID +
+      SF_INSTANCE_URL (default). This bypasses the Salesforce login form,
+      email verification challenges ("Verify your identity"), and MFA.
+    * Standard form login (SF_USERNAME + SF_PASSWORD) as a fallback.
+  The helper also waits for Lightning to load, so after it resolves the page
+  is authenticated and sitting at \`<instanceUrl>/lightning/page/home\`.
+- The helper reads its own env vars (SF_SESSION_ID, SF_INSTANCE_URL,
+  SF_LOGIN_MODE, SF_USERNAME, SF_PASSWORD, SF_LOGIN_URL). Do NOT read these
+  yourself. Do NOT concatenate SF_SECURITY_TOKEN anywhere — it is for API
+  logins only.
 - Prefer deterministic Lightning-friendly locators in this order:
   1. page.getByRole with accessible name — use EXACT strings, not ambiguous
      regexes. Lightning home/record pages often have "View All", "More",
@@ -104,12 +110,6 @@ Rules (strict):
 - Wrap each logical step in test.step('N. action text', async () => { ... }).
 - For each step, take a screenshot named step-NN.png via page.screenshot.
 - For expected results, use expect(...) assertions derived from text content or toast messages.
-- The test should log in via the standard Salesforce login page at SF_LOGIN_URL.
-- After clicking "Log In", wait for navigation AWAY from login.salesforce.com
-  (it can redirect to lightning.force.com, my.salesforce.com, or a
-  MyDomain subdomain). Before asserting the post-login URL, first check
-  whether an error like "Please check your username and password" is
-  visible — if so, fail with a clear message instead of timing out.
 - Timeouts: set test.setTimeout(180000) at top; give post-login navigation
   up to 60000ms.
 - The test title must be the test case title.
@@ -118,32 +118,14 @@ Rules (strict):
 Follow this skeleton:
 
 import { test, expect } from '@playwright/test'
+import { uat } from './_uat'
 
 test.setTimeout(180000)
 
 test('<TITLE>', async ({ page }, testInfo) => {
-  const username = process.env.SF_USERNAME ?? ''
-  const password = process.env.SF_PASSWORD ?? ''
-  const loginUrl = process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com'
-
   await test.step('0. login', async () => {
-    await page.goto(loginUrl)
-    await page.getByLabel('Username').fill(username)
-    await page.getByLabel('Password').fill(password)
-    await page.getByRole('button', { name: /log in/i }).click()
-
-    // Surface a readable failure if the credentials are wrong.
-    const errorLocator = page.locator('#error, .loginError, #errorDiv').first()
-    await Promise.race([
-      page.waitForURL((url) => !/login\\.salesforce\\.com/.test(url.hostname), {
-        timeout: 60000
-      }),
-      errorLocator.waitFor({ state: 'visible', timeout: 60000 }).then(async () => {
-        const msg = (await errorLocator.textContent())?.trim() || 'Salesforce login failed'
-        throw new Error('Salesforce login failed: ' + msg)
-      })
-    ])
-    await expect(page).not.toHaveURL(/login\\.salesforce\\.com/)
+    await uat.login(page)
+    await page.screenshot({ path: 'step-00.png' })
   })
 
   // ... steps ...
@@ -216,8 +198,15 @@ export function lintGeneratedSpec(code: string): string[] {
   if (/page\.waitForTimeout\(\s*\d{3,}/.test(code)) {
     issues.push('Hardcoded page.waitForTimeout is not allowed')
   }
-  if (/process\.env\.SF_(USERNAME|PASSWORD)/.test(code) === false) {
-    issues.push('Credentials must be read from process.env.SF_USERNAME / SF_PASSWORD')
+  // The spec must either call the uat.login helper (which reads SF_* itself)
+  // or reference SF_USERNAME/SF_PASSWORD directly. Anything else means the
+  // login step was omitted or hardcoded.
+  const usesHelper = /uat\.login\s*\(/.test(code)
+  const readsEnv = /process\.env\.SF_(USERNAME|PASSWORD)/.test(code)
+  if (!usesHelper && !readsEnv) {
+    issues.push(
+      'Login step missing: call `await uat.login(page)` or read SF_USERNAME/SF_PASSWORD from process.env'
+    )
   }
   if (/sk-[A-Za-z0-9]{20,}/.test(code) || /AIza[0-9A-Za-z_-]{20,}/.test(code)) {
     issues.push('Hardcoded API key detected')

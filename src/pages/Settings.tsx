@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Sparkles, Eye, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { Sparkles, Eye, Loader2, CheckCircle2, XCircle, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -15,6 +15,7 @@ import type {
   AIProvider,
   AppSettings,
   CalibrateProgress,
+  LoginMode,
   OrgCalibration,
   OrgProfile
 } from '@shared/types'
@@ -395,6 +396,45 @@ export function Settings(): JSX.Element {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-5 p-6">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-primary" />
+            <div className="font-medium">Salesforce login</div>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            <strong>Frontdoor</strong> (recommended) authenticates in the background via the
+            Salesforce API using your username + password + security token, then injects the
+            session into the browser via <code>/secur/frontdoor.jsp</code>. This bypasses the
+            login form, email verification codes, and MFA — the browser lands directly on the
+            authenticated Lightning home page.
+            <br />
+            Use <strong>Form</strong> only when a test case explicitly validates the login UI
+            itself. Expect Salesforce to require identity verification from a new Playwright
+            browser profile.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Login mode</Label>
+              <Select
+                value={settings.loginMode ?? 'frontdoor'}
+                onValueChange={(v) => void update({ loginMode: v as LoginMode })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="frontdoor">
+                    Frontdoor (bypass login form · recommended)
+                  </SelectItem>
+                  <SelectItem value="form">Form (type credentials in the UI)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

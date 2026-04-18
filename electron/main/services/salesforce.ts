@@ -39,6 +39,28 @@ export async function loginToOrg(profile: OrgProfile): Promise<LoginResult> {
   return { conn, instanceUrl: conn.instanceUrl }
 }
 
+/**
+ * Authenticates via the SOAP API and returns the session id + instance URL
+ * that can be used to short-circuit the Salesforce login screen via
+ * `<instanceUrl>/secur/frontdoor.jsp?sid=<sessionId>`.
+ *
+ * No logout is performed — the caller owns the session lifetime (the session
+ * will expire naturally once the Playwright run finishes).
+ */
+export async function getFrontdoorSession(
+  profile: OrgProfile
+): Promise<{ sessionId: string; instanceUrl: string }> {
+  const { conn, instanceUrl } = await loginToOrg(profile)
+  const sessionId = conn.accessToken
+  if (!sessionId) {
+    throw new Error(
+      'Salesforce login succeeded but no access token was returned. ' +
+        'This usually means jsforce could not extract the session from the SOAP response.'
+    )
+  }
+  return { sessionId, instanceUrl }
+}
+
 export async function testConnection(
   loginUrl: string,
   username: string,

@@ -344,6 +344,71 @@ export const uat = {
         }
       )
     }
+  },
+
+  /**
+   * Logs the current \`page\` into Salesforce. Prefers the frontdoor fast path
+   * (SF_SESSION_ID + SF_INSTANCE_URL, set by the parent runner after a SOAP
+   * login); falls back to the standard username/password form if the session
+   * is missing or frontdoor is disabled.
+   *
+   * Call as the very first step of any generated spec:
+   *   await uat.login(page)
+   *
+   * After it resolves, the page is authenticated and sitting at
+   * <instanceUrl>/lightning/page/home.
+   */
+  async login(page: Page): Promise<void> {
+    const sessionId = process.env.SF_SESSION_ID ?? ''
+    const instanceUrl = process.env.SF_INSTANCE_URL ?? ''
+    const loginMode = process.env.SF_LOGIN_MODE ?? 'frontdoor'
+
+    if (loginMode === 'frontdoor' && sessionId && instanceUrl) {
+      const base = instanceUrl.replace(/\\/+$/, '')
+      const retURL = encodeURIComponent('/lightning/page/home')
+      const frontdoorUrl =
+        base +
+        '/secur/frontdoor.jsp?sid=' +
+        encodeURIComponent(sessionId) +
+        '&retURL=' +
+        retURL
+      await page.goto(frontdoorUrl, { waitUntil: 'commit' })
+      try {
+        await page.waitForURL(/\\/lightning\\//, { timeout: 60000 })
+      } catch {
+        await page.waitForLoadState('domcontentloaded', { timeout: 30000 })
+      }
+      await page.waitForLoadState('domcontentloaded')
+      return
+    }
+
+    const username = process.env.SF_USERNAME ?? ''
+    const password = process.env.SF_PASSWORD ?? ''
+    const loginUrl = (process.env.SF_LOGIN_URL ?? 'https://login.salesforce.com').replace(
+      /\\/+$/,
+      ''
+    )
+    if (!username || !password) {
+      throw new Error(
+        '[uat.login] SF_USERNAME / SF_PASSWORD missing and no frontdoor session available'
+      )
+    }
+    await page.goto(loginUrl + '/', { waitUntil: 'domcontentloaded' })
+    await page.getByLabel('Username').fill(username)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: /log in/i }).click()
+    await page.waitForURL(
+      (u) =>
+        /lightning\\.force\\.com/.test(u.hostname) ||
+        (/my\\.salesforce\\.com/.test(u.hostname) && !/login/i.test(u.pathname)),
+      { timeout: 60000 }
+    )
+    const errorLocator = page.locator('#error, .loginError, [id$=errorTitle]').first()
+    if (await errorLocator.isVisible().catch(() => false)) {
+      throw new Error(
+        '[uat.login] Salesforce rejected the credentials: ' + (await errorLocator.textContent())
+      )
+    }
   }
 }
 `
