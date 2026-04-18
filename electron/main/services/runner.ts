@@ -209,6 +209,12 @@ export async function executeRun(
       SF_SESSION_ID: sessionId,
       SF_INSTANCE_URL: sessionInstanceUrl,
       SF_LOGIN_MODE: loginMode,
+      // Presentation pacing — opts.slowMo is repurposed as a click pause
+      // that `_uat.ts` applies BEFORE each click / visibility assertion
+      // (typing stays instant so Salesforce's lwc re-renders don't crawl).
+      SF_UAT_CLICK_PAUSE_MS: String(opts.slowMo),
+      SF_UAT_POST_CLICK_PAUSE_MS: String(Math.min(400, Math.max(150, Math.floor(opts.slowMo / 3)))),
+      SF_UAT_HIGHLIGHT_MS: String(Math.max(400, Math.min(1200, opts.slowMo + 200))),
       PW_SLOW_MO: String(opts.slowMo),
       // Self-healing (vision fallback) — read by the _uat.ts helper.
       SF_AI_HEALING_ENABLED: healingEnabled && aiKey ? '1' : '0',

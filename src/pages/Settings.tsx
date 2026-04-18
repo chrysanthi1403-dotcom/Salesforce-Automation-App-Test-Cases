@@ -443,7 +443,7 @@ export function Settings(): JSX.Element {
           <div className="font-medium">Playwright</div>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label>Slow-motion delay (ms)</Label>
+              <Label>Click pause (ms)</Label>
               <Input
                 type="number"
                 min={0}
@@ -454,7 +454,11 @@ export function Settings(): JSX.Element {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Higher values make it easier for end users to follow each action.
+                Pause before each click / assertion so an end user watching
+                the browser can follow along. The target is highlighted with
+                a blue outline for this long. Typing into form fields stays
+                instant regardless. Recommended: 500–900ms for demos, 0 for
+                CI / headless runs.
               </p>
             </div>
             <div className="space-y-2">

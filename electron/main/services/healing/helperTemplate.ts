@@ -39,6 +39,58 @@ const AI_PROVIDER = (process.env.SF_AI_PROVIDER ?? '') as 'anthropic' | 'openai'
 const AI_API_KEY = process.env.SF_AI_API_KEY ?? ''
 const AI_MODEL = process.env.SF_AI_VISION_MODEL ?? process.env.SF_AI_MODEL ?? ''
 
+/**
+ * Presentation-pace settings. We intentionally pause BEFORE clicks and
+ * visibility checks so the end user watching the browser can see what
+ * Playwright is about to do, and BRIEFLY highlight the target element.
+ * Typing (uat.fill) stays instant because watching each keystroke adds
+ * no value and Salesforce re-renders on every keystroke in lwc fields,
+ * which would make "slow typing" painful.
+ */
+const CLICK_PAUSE_MS = Number(process.env.SF_UAT_CLICK_PAUSE_MS ?? '600')
+const POST_CLICK_PAUSE_MS = Number(process.env.SF_UAT_POST_CLICK_PAUSE_MS ?? '250')
+const HIGHLIGHT_MS = Number(process.env.SF_UAT_HIGHLIGHT_MS ?? '500')
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return
+  await new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * Scrolls the target into view and draws a blue outline around it for a
+ * short moment, so a user watching the run can follow what is being
+ * interacted with. Never throws — purely cosmetic.
+ */
+async function highlight(locator: Locator): Promise<void> {
+  if (HIGHLIGHT_MS <= 0) return
+  try {
+    await locator.scrollIntoViewIfNeeded({ timeout: 1500 })
+  } catch {
+    // Element may not exist yet — let the caller handle that.
+  }
+  try {
+    await locator.evaluate((el: Element, durationMs: number) => {
+      const htmlEl = el as HTMLElement
+      const prevOutline = htmlEl.style.outline
+      const prevOffset = htmlEl.style.outlineOffset
+      const prevBoxShadow = htmlEl.style.boxShadow
+      const prevTransition = htmlEl.style.transition
+      htmlEl.style.transition = 'outline 0.12s ease-in-out, box-shadow 0.12s ease-in-out'
+      htmlEl.style.outline = '3px solid #2563eb'
+      htmlEl.style.outlineOffset = '2px'
+      htmlEl.style.boxShadow = '0 0 0 6px rgba(37, 99, 235, 0.25)'
+      setTimeout(() => {
+        htmlEl.style.outline = prevOutline
+        htmlEl.style.outlineOffset = prevOffset
+        htmlEl.style.boxShadow = prevBoxShadow
+        htmlEl.style.transition = prevTransition
+      }, durationMs)
+    }, HIGHLIGHT_MS)
+  } catch {
+    // Shadow-DOM / cross-origin / detached — skip silently.
+  }
+}
+
 const SYSTEM_PROMPT = \`You are a Playwright locator assistant for Salesforce Lightning. Given a screenshot and a natural-language description of the UI element the caller wants to interact with, respond ONLY with a single JSON object describing the best way to find that element with Playwright.
 
 Valid response shapes:
@@ -352,7 +404,11 @@ export const uat = {
     opts: { description: string; timeout?: number }
   ): Promise<void> {
     try {
+      await locator.waitFor({ state: 'visible', timeout: opts.timeout ?? 10000 })
+      await highlight(locator)
+      await sleep(CLICK_PAUSE_MS)
       await locator.click({ timeout: opts.timeout ?? 10000 })
+      await sleep(POST_CLICK_PAUSE_MS)
       return
     } catch (err) {
       if (await scopedFallback(page, 'click', opts.description)) return
@@ -376,6 +432,10 @@ export const uat = {
     opts: { description: string; timeout?: number }
   ): Promise<void> {
     try {
+      await locator.waitFor({ state: 'visible', timeout: opts.timeout ?? 10000 })
+      // Highlight so the user knows which field got filled, but no pause
+      // before the fill itself — typing should be instant.
+      await highlight(locator)
       await locator.fill(value, { timeout: opts.timeout ?? 10000 })
       return
     } catch (err) {
@@ -400,6 +460,8 @@ export const uat = {
   ): Promise<void> {
     try {
       await expect(locator).toBeVisible({ timeout: opts.timeout ?? 15000 })
+      await highlight(locator)
+      await sleep(CLICK_PAUSE_MS)
       return
     } catch (err) {
       if (await scopedFallback(page, 'locate', opts.description)) return

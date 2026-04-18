@@ -160,7 +160,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   ai: { provider: 'anthropic', model: DEFAULT_MODELS.anthropic },
-  slowMo: 250,
+  slowMo: 700,
   headless: false,
   theme: 'system',
   selfHealing: { enabled: false, maxFallbacksPerRun: 6 },
