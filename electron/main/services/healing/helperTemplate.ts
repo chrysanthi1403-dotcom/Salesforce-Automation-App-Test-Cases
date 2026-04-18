@@ -589,11 +589,43 @@ export const uat = {
    *   const modal = uat.modal(page, 'New Contact')
    *   await uat.click(page, modal.getByRole('button', { name: 'Save', exact: true }), { description: 'Click "Save" in the "New Contact" modal' })
    */
+  /**
+   * Returns a Locator for the "creation/edit surface" — typically a modal
+   * dialog, but transparently falls back to the full-page record-edit form
+   * when the org has replaced the modal with a full-page experience. This
+   * way, the same generated spec works for both classic and overridden
+   * creation flows without branching.
+   *
+   * When a \`titleFragment\` is given, the helper prefers a dialog whose
+   * header contains that text (e.g. "New Contact"). When no such dialog
+   * exists, it returns whichever creation surface is currently visible.
+   */
   modal(page: Page, titleFragment?: string): Locator {
     const all = page.getByRole('dialog')
-    if (!titleFragment) return all.last()
-    const re = new RegExp(titleFragment.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'), 'i')
-    return all.filter({ hasText: re }).last()
+    if (titleFragment) {
+      const re = new RegExp(
+        titleFragment.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'),
+        'i'
+      )
+      const scoped = all.filter({ hasText: re }).last()
+      // Note: we return .last() without checking .count() synchronously
+      // because Locator building must stay sync. The helper gracefully
+      // falls back below when consumers actually interact with it.
+      return scoped.or(
+        page
+          .locator(
+            'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page'
+          )
+          .first()
+      )
+    }
+    return all.last().or(
+      page
+        .locator(
+          'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page'
+        )
+        .first()
+    )
   },
 
   /**
@@ -656,68 +688,150 @@ export const uat = {
   async openNew(page: Page, apiName: string): Promise<void> {
     const origin = new URL(page.url()).origin
 
-    const tryDialogAppears = async (timeoutMs: number): Promise<boolean> => {
-      try {
-        await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: timeoutMs })
-        return true
-      } catch {
-        return false
+    /**
+     * Salesforce exposes creation forms in four different shapes:
+     *   - Modal dialog (standard, most common)
+     *   - Full-page \`lightning-record-edit-form\` (when the org overrides
+     *     the modal with a custom full-page experience)
+     *   - URL-based record edit page at /lightning/r/<Api>/new
+     *     or the legacy /<Api>/e path
+     *   - Console/Subtab inline edit form
+     *
+     * We treat ALL of them as "the creation form is open" so the rest of
+     * the test can proceed. Callers that need to scope inside a dialog
+     * should use \`uat.modal()\` which gracefully falls back to the whole
+     * page when no dialog exists.
+     */
+    const isCreationFormVisible = async (timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (await page.getByRole('dialog').first().isVisible().catch(() => false)) return true
+        const fullPageForm = page
+          .locator(
+            'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page'
+          )
+          .first()
+        if (await fullPageForm.isVisible().catch(() => false)) return true
+        const url = page.url()
+        if (/\\/lightning\\/r\\/[^/]+\\/(new|edit)\\b/.test(url) || /\\/new(\\?|$)/.test(url)) {
+          const inputCount = await page
+            .locator('input:visible, textarea:visible, lightning-input:visible')
+            .count()
+            .catch(() => 0)
+          if (inputCount >= 3) return true
+        }
+        await page.waitForTimeout(350)
       }
+      return false
     }
 
     const handleRecordTypeSelector = async (): Promise<void> => {
       const dialog = page.getByRole('dialog').last()
+      if (!(await dialog.isVisible().catch(() => false))) return
       // The record-type selector has a "Next" button but no "Save". The real
-      // creation form has "Save". This test is language-neutral enough to
-      // also work for localized orgs that still keep English button labels
-      // (the default for most Salesforce installs).
+      // creation form has "Save". This distinction works across localized
+      // orgs that keep English button labels (Salesforce default).
       const nextBtn = dialog.getByRole('button', { name: /^(next|continue|επόμενο)$/i }).first()
       const saveBtn = dialog.getByRole('button', { name: /^(save|αποθήκευση)$/i }).first()
-      const hasNext = (await nextBtn.count()) > 0
-      const hasSave = (await saveBtn.count()) > 0
+      const hasNext = (await nextBtn.count().catch(() => 0)) > 0
+      const hasSave = (await saveBtn.count().catch(() => 0)) > 0
       if (hasNext && !hasSave) {
         console.log('[uat-openNew] record-type selector detected, clicking Next')
         await nextBtn.click({ timeout: 10000 }).catch(() => void 0)
-        // Give Lightning a beat to swap in the real creation form.
         await page.waitForTimeout(800)
       }
     }
 
-    await page.goto(origin + '/lightning/o/' + apiName + '/new')
-    if (await tryDialogAppears(15000)) {
+    // ─────────────────────────────────────────────────────────────────────
+    // Attempt 1: the classic /lightning/o/<Api>/new URL hack.
+    // ─────────────────────────────────────────────────────────────────────
+    await page.goto(origin + '/lightning/o/' + apiName + '/new', { waitUntil: 'domcontentloaded' }).catch(() => void 0)
+    if (await isCreationFormVisible(12000)) {
       await handleRecordTypeSelector()
-      await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 15000 })
       return
     }
 
-    console.log(
-      '[uat-openNew] /lightning/o/' +
-        apiName +
-        '/new did not produce a modal in 15s — falling back to list + "New" button'
-    )
-    await page.goto(origin + '/lightning/o/' + apiName + '/list')
-    await page.waitForURL(new RegExp('/lightning/o/' + apiName + '/list'), { timeout: 60000 })
-    // Scope to the list header so we don't accidentally hit a row-level "New".
-    const listNewButton = page
-      .locator('.slds-page-header, div[role="banner"], force-listview-manager-header')
-      .getByRole('button', { name: /^(new|νέο|νέα)$/i })
-      .first()
-    const fallbackNewButton = (await listNewButton.count())
-      ? listNewButton
-      : page.getByRole('button', { name: /^(new|νέο|νέα)$/i }).first()
-    await fallbackNewButton.click({ timeout: 30000 })
-    if (!(await tryDialogAppears(20000))) {
-      throw new Error(
-        '[uat.openNew] Could not open the "New ' +
-          apiName +
-          '" modal via either /new URL or the list-view button. ' +
-          'Check that the running user has Create permission on ' +
-          apiName +
-          ' and that no page-layout override hides the standard creation form.'
-      )
+    // ─────────────────────────────────────────────────────────────────────
+    // Attempt 2: same URL with nooverride=1. This bypasses any Visualforce
+    // or Flow override Salesforce admins may have attached to the action,
+    // restoring the standard Lightning creation experience.
+    // ─────────────────────────────────────────────────────────────────────
+    console.log('[uat-openNew] retry via ?nooverride=1 (bypass custom overrides)')
+    await page
+      .goto(origin + '/lightning/o/' + apiName + '/new?nooverride=1', {
+        waitUntil: 'domcontentloaded'
+      })
+      .catch(() => void 0)
+    if (await isCreationFormVisible(12000)) {
+      await handleRecordTypeSelector()
+      return
     }
-    await handleRecordTypeSelector()
-    await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 15000 })
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Attempt 3: open the list view, then click the "New" button. The
+    // button may live in several different containers depending on the
+    // Lightning theme version, so we try them in priority order and
+    // accept whichever one produces a form.
+    // ─────────────────────────────────────────────────────────────────────
+    console.log('[uat-openNew] fallback via list view + "New" button')
+    await page.goto(origin + '/lightning/o/' + apiName + '/list').catch(() => void 0)
+    await page
+      .waitForURL(new RegExp('/lightning/o/' + apiName + '/list'), { timeout: 30000 })
+      .catch(() => void 0)
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => void 0)
+
+    const newRegex = /^\\s*(new|νέο|νέα)\\s*$/i
+    const buttonScopes = [
+      page.locator('force-listview-manager-header').first(),
+      page.locator('div[role="banner"]').first(),
+      page.locator('.slds-page-header').first(),
+      page // whole page, last resort
+    ]
+
+    for (const scope of buttonScopes) {
+      const candidate = scope.getByRole('button', { name: newRegex }).first()
+      if (!(await candidate.count().catch(() => 0))) continue
+      await candidate.click({ timeout: 15000 }).catch(() => void 0)
+      if (await isCreationFormVisible(12000)) {
+        await handleRecordTypeSelector()
+        return
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Attempt 4: a link styled as a button, or an anchor that navigates to
+    // the Classic "/e" edit URL. Rare but happens on legacy custom apps.
+    // ─────────────────────────────────────────────────────────────────────
+    const linkCandidate = page.getByRole('link', { name: newRegex }).first()
+    if (await linkCandidate.count().catch(() => 0)) {
+      await linkCandidate.click({ timeout: 15000 }).catch(() => void 0)
+      if (await isCreationFormVisible(12000)) {
+        await handleRecordTypeSelector()
+        return
+      }
+    }
+
+    // Give up with diagnostic evidence.
+    try {
+      await page.screenshot({ path: 'uat-openNew-failed-' + apiName + '.png', fullPage: true })
+    } catch {
+      // Screenshot failures shouldn't mask the real error.
+    }
+    const observedUrl = page.url()
+    throw new Error(
+      '[uat.openNew] Could not open the "New ' +
+        apiName +
+        '" form via any known flow (direct URL, ?nooverride=1, list + "New" button, list + "New" link). ' +
+        'Observed URL at failure: ' +
+        observedUrl +
+        '. A diagnostic screenshot was saved as uat-openNew-failed-' +
+        apiName +
+        '.png in the output folder. ' +
+        'Common causes: (1) user profile lacks Create on ' +
+        apiName +
+        ', (2) a custom Flow / Visualforce override blocks both the URL hack AND the standard button, ' +
+        '(3) the "New" button is hidden behind a dropdown this helper does not expand.'
+    )
   },
 
   /**
