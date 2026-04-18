@@ -135,16 +135,24 @@ Rules (strict):
     uat.openNew(page, 'Contact')                   // /lightning/o/Contact/new  + modal visible
     uat.modal(page, 'New Contact')                 // Locator scoped to that modal
     uat.recordTitle(page)                          // record-detail title, NOT h1
+    uat.setupHeading(page, 'Custom Metadata Types')// heading on a Setup/admin page
+    await uat.openSetupPage(page, 'Custom Metadata Types') // Setup → Quick Find → click
     await uat.waitForRecordView(page, 'Contact')   // wait for /lightning/r/Contact/<id>/view
   Mandatory usage:
   * Any navigation to a list view => uat.openList, never manual goto.
   * Any navigation to a new-record form => uat.openNew, never manual goto.
+  * Any navigation to a Setup page (Custom Metadata Types, Profiles,
+    Permission Sets, Object Manager, …) => uat.openSetupPage(page, '<label>').
+    Do NOT hardcode /lightning/setup/<Something>/home URLs — the slugs
+    change between Salesforce releases.
   * Any assertion about the record-detail title (e.g. "The page title
     contains Test UAT Runner") => expect(uat.recordTitle(page)).toContainText('Test UAT Runner').
+  * Any assertion about a heading on a Setup/admin page (e.g. "The heading
+    'Custom Metadata Types' is visible") => expect(uat.setupHeading(page, 'Custom Metadata Types')).toBeVisible().
     NEVER use page.locator('h1'), page.getByRole('heading', ...) or
-    page.getByText(...) at page scope for this — Lightning renders 3+ h1
-    elements (app name, breadcrumbs, list header, record title) so bare
-    heading locators ALWAYS strict-mode fail.
+    page.getByText(...) at page scope — Lightning and Setup render 3+
+    headings (app name, breadcrumbs, list header, record title, section)
+    so bare heading locators ALWAYS strict-mode fail.
   * When the test step references a "New Foo" / "Edit Foo" modal, bind a
     const at the top of the step:
        const modal = uat.modal(page, 'New Contact')
@@ -350,7 +358,7 @@ export function lintGeneratedSpec(code: string, tc?: TestCase): string[] {
   }
   if (/page\.getByRole\(\s*['"]heading['"]\s*(?:,\s*\{\s*name[^}]*\})?\s*\)(?!\s*\.(first|last|nth|filter))/.test(code)) {
     issues.push(
-      'Page-wide page.getByRole("heading", ...) is unsafe on Lightning. Prefer `uat.recordTitle(page)` for record-detail titles, or scope the heading lookup (e.g. `modal.getByRole("heading", ...)`).'
+      'Page-wide page.getByRole("heading", ...) is unsafe on Lightning. Use the right primitive for the context: `uat.recordTitle(page)` for a record-detail title, `uat.setupHeading(page, "<name>")` for a heading on a Setup/admin page, or `modal.getByRole("heading", ...)` when the heading is inside a modal.'
     )
   }
 

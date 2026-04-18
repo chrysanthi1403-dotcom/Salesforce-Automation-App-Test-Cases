@@ -4,7 +4,19 @@ TC-001,Login and open App Launcher,2,Click the App Launcher (waffle icon at top 
 TC-001,Login and open App Launcher,3,Type "Sales" in the App Launcher search box,Sales,The Sales app appears in the results
 TC-001,Login and open App Launcher,4,Press Escape to close the App Launcher,,The panel closes and focus returns to the home page
 TC-002,Create a Contact,1,From the App Launcher open the Contacts tab,,The Contacts list view is shown
-TC-002,Create a Contact,2,Click the New button to open the Contact creation form,,A modal dialog titled "New Contact" appears
+TC-002,Create a Contact,2,Click the New button to open the Contact creation form,,A creation form titled "New Contact" appears
 TC-002,Create a Contact,3,Fill in First Name and Last Name,"First Name=Test, Last Name=UAT Runner",The fields accept the values without validation errors
-TC-002,Create a Contact,4,Click Save,,The dialog closes and the newly created Contact detail page is shown with the name "Test UAT Runner"
+TC-002,Create a Contact,4,Click Save,,The form closes and the newly created Contact detail page is shown with the name "Test UAT Runner"
 TC-002,Create a Contact,5,Verify the Contact appears on its detail page,,The page title contains "Test UAT Runner"
+TC-003,View Custom Metadata Types in Setup,1,Open the Setup workspace from the gear icon at the top right,,The Setup workspace opens
+TC-003,View Custom Metadata Types in Setup,2,Type "Custom Metadata Types" in the Quick Find box,Custom Metadata Types,An entry labelled "Custom Metadata Types" appears under Custom Code in Quick Find
+TC-003,View Custom Metadata Types in Setup,3,Click the Custom Metadata Types entry in Quick Find,,The Custom Metadata Types setup page opens
+TC-003,View Custom Metadata Types in Setup,4,Verify the page shows the Custom Metadata Types list,,The heading "Custom Metadata Types" is visible and either a list of types or the standard empty-state message is shown
+TC-004,Create a Lead,1,From the App Launcher open the Leads tab,,The Leads list view is shown
+TC-004,Create a Lead,2,Click the New button to open the Lead creation form,,A creation form titled "New Lead" appears
+TC-004,Create a Lead,3,Fill in Last Name and Company,"Last Name=Smoke Test, Company=UAT Runner Inc",The fields accept the values without validation errors
+TC-004,Create a Lead,4,Click Save,,The form closes and the newly created Lead detail page is shown
+TC-004,Create a Lead,5,Verify the Lead appears on its detail page,,The page title contains "Smoke Test"
+TC-005,Search for a record via global search,1,Click the global Search box at the top of the Lightning header,,The search box receives focus and a dropdown with recent items may appear
+TC-005,Search for a record via global search,2,Type "Acme" in the global search box,Acme,Search suggestions containing "Acme" are displayed in the dropdown
+TC-005,Search for a record via global search,3,Press Enter to execute the search,,The full search results page opens and lists any records or sections matching "Acme"
