@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { userDataPath } from './paths'
-import { loginToOrg } from './salesforce'
+import { getFrontdoorSession, loginToOrg } from './salesforce'
+import { SettingsService } from './settings'
 import { SecretsService } from './secrets'
 import { appBrowsersPath, ensureChromiumInstalled } from './browsers'
 import type {
@@ -120,14 +121,44 @@ export async function calibrateOrg(opts: {
   const page = await ctx.newPage()
 
   try {
-    // Log in via the UI (same flow as the generated specs).
-    await page.goto(opts.org.loginUrl)
-    await page.getByLabel('Username').fill(opts.org.username)
-    await page.getByLabel('Password').fill(creds.password)
-    await page.getByRole('button', { name: /log in/i }).click()
-    await page.waitForURL((url) => !/login\.salesforce\.com/.test(url.hostname), {
-      timeout: 90000
-    })
+    // Prefer the frontdoor login used by the main runner — bypasses MFA and
+    // "Verify your identity" challenges that block fresh Playwright profiles.
+    const loginMode = SettingsService.get().loginMode ?? 'frontdoor'
+    let frontdoorWorked = false
+    if (loginMode === 'frontdoor') {
+      try {
+        emit({
+          orgId: opts.org.id,
+          stage: 'login',
+          message: 'Authenticating via Salesforce API (frontdoor)…'
+        })
+        const session = await getFrontdoorSession(opts.org)
+        const base = session.instanceUrl.replace(/\/+$/, '')
+        const retURL = encodeURIComponent('/lightning/page/home')
+        await page.goto(
+          `${base}/secur/frontdoor.jsp?sid=${encodeURIComponent(session.sessionId)}&retURL=${retURL}`,
+          { waitUntil: 'commit' }
+        )
+        await page.waitForURL(/\/lightning\//, { timeout: 60000 })
+        frontdoorWorked = true
+      } catch (err) {
+        emit({
+          orgId: opts.org.id,
+          stage: 'login',
+          message: `Frontdoor failed (${(err as Error).message}). Falling back to form login.`
+        })
+      }
+    }
+
+    if (!frontdoorWorked) {
+      await page.goto(opts.org.loginUrl)
+      await page.getByLabel('Username').fill(opts.org.username)
+      await page.getByLabel('Password').fill(creds.password)
+      await page.getByRole('button', { name: /log in/i }).click()
+      await page.waitForURL((url) => !/login\.salesforce\.com/.test(url.hostname), {
+        timeout: 90000
+      })
+    }
 
     const origin = new URL(page.url()).origin
     const snapshots: CalibrationObjectSnapshot[] = []

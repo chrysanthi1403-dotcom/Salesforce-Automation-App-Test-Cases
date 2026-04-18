@@ -76,6 +76,32 @@ Rules (strict):
   the linter and cause a hard failure.
 - NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
 - NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
+- FILLING SALESFORCE FIELDS (critical — do NOT skip):
+  * When the test step says "Fill X with Y" or "Enter Y in X" you MUST
+    produce a real uat.fill call for EACH distinct field named in the step.
+    Never condense two fields into a single call. Never generate a click
+    on Save without first generating the fills.
+  * If the step lists multiple fields (e.g. "Fill in First Name and Last
+    Name") or the Data column contains a comma-separated list like
+    "First Name=Test, Last Name=UAT Runner", emit one uat.fill per
+    pair, using the label as it appears in the step as the target.
+  * Preferred field locators for Salesforce Lightning forms (try in order):
+      page.getByLabel('First Name')                              // works for most lightning-input
+      page.getByRole('textbox', { name: 'First Name' })          // strict-mode safe for many inputs
+      page.locator('lightning-input:has(label:has-text("First Name")) input').first()
+      page.locator('label:has-text("First Name")').locator('xpath=..').locator('input,textarea').first()
+    Picklists (Salesforce "combobox"):
+      page.getByRole('combobox', { name: 'Salutation' }).click()
+      page.getByRole('option', { name: 'Mr.' }).click()
+    Reference/lookup fields use the same combobox role but require typing:
+      page.getByRole('combobox', { name: 'Account Name' }).fill('Acme')
+      page.getByRole('option', { name: /Acme/ }).first().click()
+  * Use uat.fill (not raw page.fill) so the helper can heal when the label
+    is inside a shadow DOM or lwc-specific wrapper. Always supply a
+    description that names the field AND the modal / section, e.g.
+    "Fill the Last Name field in the New Contact modal".
+  * If a required field is mentioned in the test Data (even indirectly),
+    fill it before clicking Save. Never assume a default value.
 - SELF-HEALING WRAPPERS: alongside every generated spec there is a sibling
   file \`_uat.ts\` that exports \`uat.click\`, \`uat.fill\`, and \`uat.visible\`.
   These wrap a Playwright locator and, on failure, fall back to an AI
