@@ -102,6 +102,33 @@ Rules (strict):
     "Fill the Last Name field in the New Contact modal".
   * If a required field is mentioned in the test Data (even indirectly),
     fill it before clicking Save. Never assume a default value.
+- WORKING WITH SALESFORCE MODALS (Save / Cancel / Save & New):
+  * When a step interacts with an element inside the "New" modal (Contact,
+    Account, …), ALWAYS scope the locator to the modal first. Salesforce
+    renders duplicate Save / Save & New / Cancel buttons (header footer,
+    toast actions, background record page still on the DOM) and a
+    page-wide getByRole('button', { name: 'Save' }) will hit the strict
+    mode violation or click the wrong one — even with .nth() the ordering
+    is not stable across orgs and page loads.
+  * Correct pattern — save once inside the modal:
+      const modal = page.getByRole('dialog').filter({ hasText: /New Contact/ })
+      await uat.click(
+        page,
+        modal.getByRole('button', { name: 'Save', exact: true }),
+        { description: 'Click Save at the bottom of the New Contact modal' }
+      )
+    If the step says "Save & New" instead, use name: 'Save & New'. The
+    Cancel button follows the same pattern.
+  * Same rule for all fills inside a modal — do:
+      await uat.fill(page, modal.getByLabel('First Name'), 'Test', { description: '…' })
+    instead of page.getByLabel(...). This keeps the locator scoped even
+    when the background record page has a field with the same label.
+  * After the Save completes, wait for the modal to disappear before
+    asserting the record URL:
+      await expect(modal).toBeHidden({ timeout: 30000 })
+      await page.waitForURL(/\\/lightning\\/r\\/Contact\\/[0-9A-Za-z]{15,18}\\/view/, { timeout: 60000 })
+  * Never pass { exact: false } when looking up Save / Cancel inside a
+    modal — the exact label avoids picking up "Save & New" by accident.
 - SELF-HEALING WRAPPERS: alongside every generated spec there is a sibling
   file \`_uat.ts\` that exports \`uat.click\`, \`uat.fill\`, and \`uat.visible\`.
   These wrap a Playwright locator and, on failure, fall back to an AI
@@ -112,22 +139,26 @@ Rules (strict):
     await uat.click(
       page,
       page.getByRole('button', { name: 'New' }),
-      { description: 'Click the New button at the top-right of the Contacts list' }
+      { description: 'Click the "New" button at the top-right of the Contacts list' }
     )
     await uat.fill(
       page,
       page.getByLabel('Last Name'),
       'Smith',
-      { description: 'Fill the Last Name field in the New Contact modal' }
+      { description: 'Fill the "Last Name" field in the New Contact modal' }
     )
     await uat.visible(
       page,
       page.getByRole('dialog', { name: 'New Contact' }),
-      { description: 'New Contact creation modal' }
+      { description: 'The "New Contact" creation modal' }
     )
   Rules for \`description\`:
     * Always a single sentence in plain English.
     * Mention which page/modal the element lives in.
+    * Wrap the element's EXACT visible name in double quotes, e.g.
+      "Click \\"Save\\" at the bottom of the New Contact modal" or
+      "Fill the \\"Last Name\\" field in the New Contact modal". The
+      runtime parses the quoted name for deterministic scoped fallbacks.
     * Mention visible text / label / position (e.g. "top-right", "inside
       the Details tab") when useful.
   Continue to use raw \`expect(...)\` for URL / text assertions that don't

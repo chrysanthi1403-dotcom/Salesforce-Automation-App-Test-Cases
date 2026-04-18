@@ -277,6 +277,51 @@ async function healAndRetry<T>(
   return apply(hint)
 }
 
+/**
+ * Cheap deterministic retries before burning a vision call. Salesforce
+ * renders duplicates of common buttons (Save, Cancel, New) both inside
+ * the modal AND on the background record page. Scoping to the top-most
+ * visible dialog fixes the majority of strict-mode / nth() misses.
+ */
+async function scopedFallback(
+  page: Page,
+  action: Action,
+  description: string,
+  value?: string
+): Promise<boolean> {
+  const match = description.match(/['"]([^'"]+)['"]/)
+  const name = match?.[1]?.trim()
+  if (!name) return false
+  const dialog = page.getByRole('dialog').last()
+  if (!(await dialog.isVisible().catch(() => false))) return false
+  try {
+    if (action === 'click') {
+      const btn = dialog.getByRole('button', { name, exact: true }).first()
+      if (await btn.count() === 0) return false
+      await btn.click({ timeout: 10000 })
+      logHeal('scoped-fallback (dialog button "' + name + '") handled: ' + description)
+      return true
+    }
+    if (action === 'fill' && typeof value === 'string') {
+      const input = dialog.getByLabel(name).first()
+      if (await input.count() === 0) return false
+      await input.fill(value, { timeout: 10000 })
+      logHeal('scoped-fallback (dialog label "' + name + '") handled: ' + description)
+      return true
+    }
+    if (action === 'locate') {
+      const el = dialog.getByText(name).first()
+      if (await el.count() === 0) return false
+      await el.waitFor({ state: 'visible', timeout: 10000 })
+      logHeal('scoped-fallback (dialog text "' + name + '") handled: ' + description)
+      return true
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
 export const uat = {
   async click(
     page: Page,
@@ -287,6 +332,7 @@ export const uat = {
       await locator.click({ timeout: opts.timeout ?? 10000 })
       return
     } catch (err) {
+      if (await scopedFallback(page, 'click', opts.description)) return
       await healAndRetry(
         page,
         opts.description,
@@ -310,6 +356,7 @@ export const uat = {
       await locator.fill(value, { timeout: opts.timeout ?? 10000 })
       return
     } catch (err) {
+      if (await scopedFallback(page, 'fill', opts.description, value)) return
       await healAndRetry(
         page,
         opts.description,
@@ -332,6 +379,7 @@ export const uat = {
       await expect(locator).toBeVisible({ timeout: opts.timeout ?? 15000 })
       return
     } catch (err) {
+      if (await scopedFallback(page, 'locate', opts.description)) return
       await healAndRetry(
         page,
         opts.description,
