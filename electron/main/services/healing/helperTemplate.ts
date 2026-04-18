@@ -637,13 +637,87 @@ export const uat = {
   },
 
   /**
-   * Navigate directly to the Lightning "new record" modal URL for the
-   * given object's API name. Waits for the modal to become visible.
+   * Navigate to the Lightning "new record" modal for the given object's API
+   * name. Salesforce exposes three different flows depending on the object
+   * and the running user's profile:
+   *
+   *   a) \`/lightning/o/<Api>/new\` → new-record modal opens immediately
+   *      (most common case for standard objects).
+   *   b) \`/lightning/o/<Api>/new\` → "Change Record Type" selector modal
+   *      first, then Next → real new-record modal.
+   *   c) URL hack silently bounces back to the list view (e.g. when the
+   *      object has a custom layout override). In that case we open the
+   *      list and click the "New" button ourselves.
+   *
+   * This helper tries (a) first, handles (b) automatically, and falls back
+   * to (c) if the modal never appears — so the same generated spec works
+   * across orgs with very different customisation.
    */
   async openNew(page: Page, apiName: string): Promise<void> {
     const origin = new URL(page.url()).origin
+
+    const tryDialogAppears = async (timeoutMs: number): Promise<boolean> => {
+      try {
+        await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: timeoutMs })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const handleRecordTypeSelector = async (): Promise<void> => {
+      const dialog = page.getByRole('dialog').last()
+      // The record-type selector has a "Next" button but no "Save". The real
+      // creation form has "Save". This test is language-neutral enough to
+      // also work for localized orgs that still keep English button labels
+      // (the default for most Salesforce installs).
+      const nextBtn = dialog.getByRole('button', { name: /^(next|continue|επόμενο)$/i }).first()
+      const saveBtn = dialog.getByRole('button', { name: /^(save|αποθήκευση)$/i }).first()
+      const hasNext = (await nextBtn.count()) > 0
+      const hasSave = (await saveBtn.count()) > 0
+      if (hasNext && !hasSave) {
+        console.log('[uat-openNew] record-type selector detected, clicking Next')
+        await nextBtn.click({ timeout: 10000 }).catch(() => void 0)
+        // Give Lightning a beat to swap in the real creation form.
+        await page.waitForTimeout(800)
+      }
+    }
+
     await page.goto(origin + '/lightning/o/' + apiName + '/new')
-    await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 60000 })
+    if (await tryDialogAppears(15000)) {
+      await handleRecordTypeSelector()
+      await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 15000 })
+      return
+    }
+
+    console.log(
+      '[uat-openNew] /lightning/o/' +
+        apiName +
+        '/new did not produce a modal in 15s — falling back to list + "New" button'
+    )
+    await page.goto(origin + '/lightning/o/' + apiName + '/list')
+    await page.waitForURL(new RegExp('/lightning/o/' + apiName + '/list'), { timeout: 60000 })
+    // Scope to the list header so we don't accidentally hit a row-level "New".
+    const listNewButton = page
+      .locator('.slds-page-header, div[role="banner"], force-listview-manager-header')
+      .getByRole('button', { name: /^(new|νέο|νέα)$/i })
+      .first()
+    const fallbackNewButton = (await listNewButton.count())
+      ? listNewButton
+      : page.getByRole('button', { name: /^(new|νέο|νέα)$/i }).first()
+    await fallbackNewButton.click({ timeout: 30000 })
+    if (!(await tryDialogAppears(20000))) {
+      throw new Error(
+        '[uat.openNew] Could not open the "New ' +
+          apiName +
+          '" modal via either /new URL or the list-view button. ' +
+          'Check that the running user has Create permission on ' +
+          apiName +
+          ' and that no page-layout override hides the standard creation form.'
+      )
+    }
+    await handleRecordTypeSelector()
+    await page.getByRole('dialog').last().waitFor({ state: 'visible', timeout: 15000 })
   },
 
   /**
