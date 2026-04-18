@@ -64,16 +64,16 @@ Rules (strict):
 - After any form submission that triggers navigation (Save, Submit, Log In, etc.)
   use page.waitForURL with timeout: 60000 before asserting. Do NOT rely on
   expect(page).toHaveURL(...) with the default timeout after such actions.
-- ONLY use the App Launcher UI path if the test step EXPLICITLY validates
-  App Launcher behaviour itself (e.g. "verify the App Launcher search
-  returns the Contacts app"). If you do, use this deterministic pattern
-  and wait for the spinner to disappear first:
-    await page.getByRole('button', { name: 'App Launcher' }).click()
-    const launcher = page.getByRole('dialog')
-    await launcher.getByRole('button', { name: 'View All Applications' }).click()
-    await expect(launcher.locator('.slds-spinner, lightning-spinner')).toHaveCount(0, { timeout: 30000 })
-    await launcher.getByRole('searchbox', { name: /Search apps/i }).fill('Contacts')
-    await launcher.getByRole('link', { name: 'Contacts', exact: true }).click()
+- DO NOT CLICK the "App Launcher" button under any circumstance. In
+  Developer Edition / fresh orgs its search index is unreliable and the
+  searchbox frequently never becomes interactable, causing the test to
+  hang until timeout. Even a test step that says "From the App Launcher
+  open the Contacts tab" MUST be implemented with direct URL navigation
+  (page.goto + waitForURL). The only case where App Launcher code is
+  acceptable is a step that literally asserts App Launcher UI behaviour
+  (e.g. "verify the App Launcher modal opens"). Generating
+  `getByRole('button', { name: 'App Launcher' })` will be rejected by
+  the linter and cause a hard failure.
 - NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
 - NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
 - SELF-HEALING WRAPPERS: alongside every generated spec there is a sibling
@@ -210,6 +210,11 @@ export function lintGeneratedSpec(code: string): string[] {
   }
   if (/sk-[A-Za-z0-9]{20,}/.test(code) || /AIza[0-9A-Za-z_-]{20,}/.test(code)) {
     issues.push('Hardcoded API key detected')
+  }
+  if (/getByRole\(\s*['"]button['"]\s*,\s*\{\s*name:\s*['"]App Launcher['"]/.test(code)) {
+    issues.push(
+      'App Launcher UI navigation is forbidden. The App Launcher search index is unreliable in Developer Edition and causes the searchbox to never become interactable. Replace the entire App-Launcher flow with direct Lightning URL navigation: `const origin = new URL(page.url()).origin; await page.goto(origin + "/lightning/o/<Object>/list"); await page.waitForURL(/\\/lightning\\/o\\/<Object>\\/list/, { timeout: 60000 });`'
+    )
   }
   return issues
 }
