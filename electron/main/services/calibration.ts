@@ -203,47 +203,107 @@ export async function calibrateOrg(opts: {
         )
         .catch(() => [] as string[])
 
-      // Try opening the "New" modal; some objects don't allow creation via UI
-      // (e.g. read-only, platform-locked) so we swallow the error.
+      // Discover the REAL creation flow the way a human user would:
+      // stay on the list view and click the "New" button. This is the only
+      // path that works reliably across orgs with Agentforce, Flow
+      // overrides, and custom page-layout overrides — unlike the
+      // /lightning/o/<Api>/new URL hack which frequently redirects to
+      // random pages (Agentforce Studio, Navigation Menu, etc.) and
+      // poisons the calibration snapshot with garbage labels.
       let newFormTitle: string | null = null
+      let newFormKind: 'modal' | 'full_page' | 'none' = 'none'
       const fields: Array<{ label: string; type: string; required: boolean }> = []
+
       try {
-        await page.goto(`${origin}/lightning/o/${api}/new`)
-        await page.waitForLoadState('domcontentloaded').catch(() => void 0)
-        await page.waitForTimeout(2500)
-        newFormTitle = await page
+        const newRegex = /^\s*(new|νέο|νέα)\s*$/i
+        const headerBtn = page
+          .locator('force-listview-manager-header, div[role="banner"], .slds-page-header')
+          .getByRole('button', { name: newRegex })
+          .first()
+        const anyBtn = page.getByRole('button', { name: newRegex }).first()
+        const btn = (await headerBtn.count().catch(() => 0)) > 0 ? headerBtn : anyBtn
+
+        if (!(await btn.isVisible().catch(() => false))) {
+          // Nothing to capture — object is probably not creatable in this
+          // org (permission set, managed package lock, etc.). Move on.
+        } else {
+          await btn.click({ timeout: 15000 }).catch(() => void 0)
+
+          // Wait up to 20s for either a modal dialog or a full-page form.
+          const deadline = Date.now() + 20000
+          let formRoot: ReturnType<typeof page.locator> | null = null
+          while (Date.now() < deadline) {
+            const dialog = page.getByRole('dialog').first()
+            if (await dialog.isVisible().catch(() => false)) {
+              newFormKind = 'modal'
+              formRoot = dialog
+              break
+            }
+            const fullPage = page
+              .locator('lightning-record-edit-form, records-record-layout, records-record-creation')
+              .first()
+            if (await fullPage.isVisible().catch(() => false)) {
+              newFormKind = 'full_page'
+              formRoot = fullPage
+              break
+            }
+            await page.waitForTimeout(350)
+          }
+
+          if (formRoot) {
+            // Capture the form title, scoped to the surface we found.
+            newFormTitle = await formRoot
+              .getAttribute('aria-label')
+              .catch(() => null)
+            if (!newFormTitle) {
+              newFormTitle = await formRoot
+                .locator('h1, h2, .slds-modal__title')
+                .first()
+                .textContent()
+                .then((t) => (t ? t.trim() : null))
+                .catch(() => null)
+            }
+            // Capture ONLY the fields inside the form — this is the fix
+            // for "Search Salesforce" and "Upload Files" appearing in the
+            // calibration: those are global page chrome, not form fields.
+            const extracted = await formRoot
+              .locator('label')
+              .evaluateAll((labels: Element[]) =>
+                labels
+                  .map((el) => {
+                    const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+                    if (!t || t.length > 80) return null
+                    const required =
+                      /\*/.test(t) || el.querySelector('.required, .slds-required')
+                        ? true
+                        : false
+                    const clean = t.replace(/\*/g, '').trim()
+                    return clean ? { label: clean, type: 'field', required } : null
+                  })
+                  .filter((x): x is { label: string; type: string; required: boolean } => x !== null)
+                  .slice(0, 40)
+              )
+              .catch(() => [] as Array<{ label: string; type: string; required: boolean }>)
+            fields.push(...extracted)
+          }
+        }
+      } catch {
+        // Skip object — calibration is best-effort.
+      }
+
+      // Make sure we leave the page in a clean state before the next
+      // object (close any open modal so it doesn't shadow the next list).
+      try {
+        const closeBtn = page
           .getByRole('dialog')
           .first()
-          .getAttribute('aria-label')
-          .catch(() => null)
-        if (!newFormTitle) {
-          newFormTitle = await page
-            .locator('h1, h2')
-            .first()
-            .textContent()
-            .then((t) => (t ? t.trim() : null))
-            .catch(() => null)
+          .getByRole('button', { name: /^(cancel|close|άκυρο|κλείσιμο)$/i })
+          .first()
+        if (await closeBtn.isVisible().catch(() => false)) {
+          await closeBtn.click({ timeout: 5000 }).catch(() => void 0)
         }
-        const extracted = await page
-          .locator('label')
-          .evaluateAll((labels: Element[]) =>
-            labels
-              .map((el) => {
-                const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
-                if (!t || t.length > 80) return null
-                const required = /\*/.test(t) || el.querySelector('.required, .slds-required')
-                  ? true
-                  : false
-                const clean = t.replace(/\*/g, '').trim()
-                return clean ? { label: clean, type: 'field', required } : null
-              })
-              .filter((x): x is { label: string; type: string; required: boolean } => x !== null)
-              .slice(0, 30)
-          )
-          .catch(() => [] as Array<{ label: string; type: string; required: boolean }>)
-        fields.push(...extracted)
       } catch {
-        // skip object
+        // Ignore — the next page.goto will replace whatever is on screen.
       }
 
       snapshots.push({
