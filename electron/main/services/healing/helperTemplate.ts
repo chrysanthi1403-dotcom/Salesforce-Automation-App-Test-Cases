@@ -622,31 +622,58 @@ export const uat = {
    * exists, it returns whichever creation surface is currently visible.
    */
   modal(page: Page, titleFragment?: string): Locator {
-    const all = page.getByRole('dialog')
+    // The "creation/edit surface" in Salesforce can take several forms that
+    // are VISUALLY almost identical but structurally very different. To
+    // keep the generated specs readable ("modal.getByLabel('First Name')"),
+    // we return a locator that matches whichever of these is on screen:
+    //
+    //   1. A standard Lightning dialog (role="dialog"). Classic modal.
+    //   2. A Salesforce SLDS modal container (section.slds-modal__container
+    //      — used by legacy overlays and some Console apps that don't set
+    //      role="dialog" on the outer wrapper).
+    //   3. A full-page lightning-record-edit-form (when the org replaced
+    //      the modal with a full-page experience via page layout / override).
+    //   4. A flexipage-based record-creation page (records-record-layout,
+    //      records-record-creation, records-entity-edit-page).
+    //   5. LAST RESORT: the records-recordedit component anywhere on the
+    //      page. This covers Service Console + Agentforce workspaces where
+    //      the creation form renders inside a Lightning workspace tab that
+    //      does not expose role="dialog".
+    const dialog = page.getByRole('dialog')
+    const sldsModal = page.locator('section.slds-modal__container:visible').first()
+    const lightningForm = page
+      .locator(
+        'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page, records-recordedit, records-form'
+      )
+      .first()
+    // Workspace-tab creation surface: many Developer Edition orgs (and
+    // orgs with Agentforce Studio or a Console app) open the "New Record"
+    // form inside a [role="tabpanel"] inside <main>, WITHOUT a role=dialog
+    // and WITHOUT a lightning-record-edit-form wrapper element. In that
+    // case the form still has a "Save" button and a title heading, so we
+    // scope to the active tabpanel that has those.
+    const workspaceTab = page
+      .locator('main [role="tabpanel"]')
+      .filter({ has: page.getByRole('button', { name: /^(save|αποθήκευση)$/i }) })
+      .last()
+    // Last-resort surface: the <main> region. This always matches on a
+    // Lightning page and lets label-based selectors find inputs even in
+    // heavily customised orgs. It's intentionally broad — the calling
+    // step's label text (e.g. "First Name") is specific enough to pick
+    // the right input when the more targeted scopes above do not match.
+    const mainRegion = page.getByRole('main').last()
+
     if (titleFragment) {
       const re = new RegExp(
         titleFragment.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'),
         'i'
       )
-      const scoped = all.filter({ hasText: re }).last()
-      // Note: we return .last() without checking .count() synchronously
-      // because Locator building must stay sync. The helper gracefully
-      // falls back below when consumers actually interact with it.
-      return scoped.or(
-        page
-          .locator(
-            'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page'
-          )
-          .first()
-      )
+      const scoped = dialog.filter({ hasText: re }).last()
+      const scopedSlds = sldsModal.filter({ hasText: re })
+      const scopedWorkspace = workspaceTab.filter({ hasText: re })
+      return scoped.or(scopedSlds).or(scopedWorkspace).or(lightningForm).or(workspaceTab).or(mainRegion)
     }
-    return all.last().or(
-      page
-        .locator(
-          'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page'
-        )
-        .first()
-    )
+    return dialog.last().or(sldsModal).or(lightningForm).or(workspaceTab).or(mainRegion)
   },
 
   /**
@@ -760,19 +787,58 @@ export const uat = {
 
     await newButton.click({ timeout: 15000 })
 
-    // Wait for the creation form: either a dialog (standard) or a
-    // full-page record-edit form (when the org overrides the modal).
-    const deadline = Date.now() + 30000
+    // Wait for Salesforce to navigate to its creation URL. Clicking "New"
+    // always flips the URL to /lightning/o/<Api>/new?... — regardless of
+    // whether the final form renders as a modal, a Console subtab, or a
+    // full-page flex layout. So we treat the URL change as the first,
+    // cheapest signal.
+    await page
+      .waitForURL(new RegExp('/lightning/o/' + apiName + '/new\\\\b'), { timeout: 30000 })
+      .catch(() => void 0)
+
+    // Now wait for the form to be TRULY READY to accept input. We look
+    // for a combination of signals that holds across every Salesforce UI
+    // variant we've seen (Lightning Experience, Service Console, Agent
+    // workspace, Agentforce-augmented orgs):
+    //
+    //   - At least 3 visible input/textarea/combobox elements
+    //   - A visible "Save" button (or localized equivalent)
+    //
+    // We intentionally do NOT require role="dialog". In Service Console
+    // and some Agentforce orgs the creation form is rendered full-viewport
+    // without that role, and requiring it causes exactly the "stuck at
+    // step 2" failure screenshots users report even though the form is
+    // clearly on screen.
+    const deadline = Date.now() + 45000
+    let lastReport = 0
     while (Date.now() < deadline) {
-      if (await page.getByRole('dialog').first().isVisible().catch(() => false)) {
+      const visibleInputs = await page
+        .locator('input:visible, textarea:visible, lightning-input:visible, lightning-combobox:visible')
+        .count()
+        .catch(() => 0)
+      const saveButton = page.getByRole('button', { name: /^(save|αποθήκευση)$/i }).first()
+      const hasSave = await saveButton.isVisible().catch(() => false)
+      if (visibleInputs >= 3 && hasSave) {
         await handleRecordTypeSelectorIfPresent(page)
         return
       }
-      const fullPageForm = page
-        .locator('lightning-record-edit-form, records-record-layout, records-record-creation')
-        .first()
-      if (await fullPageForm.isVisible().catch(() => false)) return
-      await page.waitForTimeout(400)
+      // Periodically log what we're waiting for so the end user's run log
+      // shows useful progress instead of silent failure.
+      if (Date.now() - lastReport > 5000) {
+        console.log(
+          '[uat-openNew] waiting for ' +
+            apiName +
+            ' form (visible inputs=' +
+            visibleInputs +
+            ', save button=' +
+            hasSave +
+            ', url=' +
+            page.url() +
+            ')'
+        )
+        lastReport = Date.now()
+      }
+      await page.waitForTimeout(500)
     }
 
     // Diagnostic screenshot so the end user can see what the browser was
@@ -785,11 +851,11 @@ export const uat = {
     throw new Error(
       '[uat.openNew] Clicked "New" on ' +
         apiName +
-        ' list view but no creation form appeared within 30s. Current URL: ' +
+        ' list view but no fillable form appeared within 45s. Current URL: ' +
         page.url() +
-        '. Likely cause: a custom Flow / Visualforce override is attached to the New action, or Agentforce intercepted the page. A screenshot was saved as uat-openNew-failed-' +
+        '. Open the saved screenshot uat-openNew-failed-' +
         apiName +
-        '.png in the output folder.'
+        '.png to see what was on screen — typical causes are a Flow/VF override or, rarely, an org whose New action doesn\\'t create a record at all.'
     )
   },
 

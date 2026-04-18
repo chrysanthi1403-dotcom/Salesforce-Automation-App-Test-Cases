@@ -229,8 +229,13 @@ export async function calibrateOrg(opts: {
         } else {
           await btn.click({ timeout: 15000 }).catch(() => void 0)
 
-          // Wait up to 20s for either a modal dialog or a full-page form.
-          const deadline = Date.now() + 20000
+          // Wait up to 30s for a creation surface. Covers four shapes we
+          // have observed in the wild:
+          //   1) Standard role=dialog modal (classic LEX).
+          //   2) full-page lightning-record-edit-form (layout override).
+          //   3) Workspace tabpanel (Console / Agentforce Studio orgs).
+          //   4) Fallback: <main> region with many inputs + a Save button.
+          const deadline = Date.now() + 30000
           let formRoot: ReturnType<typeof page.locator> | null = null
           while (Date.now() < deadline) {
             const dialog = page.getByRole('dialog').first()
@@ -240,12 +245,31 @@ export async function calibrateOrg(opts: {
               break
             }
             const fullPage = page
-              .locator('lightning-record-edit-form, records-record-layout, records-record-creation')
+              .locator(
+                'lightning-record-edit-form, records-record-layout, records-record-creation, records-entity-edit-page, records-recordedit, records-form'
+              )
               .first()
             if (await fullPage.isVisible().catch(() => false)) {
               newFormKind = 'full_page'
               formRoot = fullPage
               break
+            }
+            // Workspace tabpanel (no role=dialog, no lightning-record-edit-form)
+            const workspaceTab = page
+              .locator('main [role="tabpanel"]')
+              .filter({ has: page.getByRole('button', { name: /^(save|αποθήκευση)$/i }) })
+              .last()
+            if (await workspaceTab.isVisible().catch(() => false)) {
+              // Use a heuristic to confirm: must contain >= 3 visible inputs.
+              const inputCount = await workspaceTab
+                .locator('input:visible, textarea:visible, lightning-input:visible')
+                .count()
+                .catch(() => 0)
+              if (inputCount >= 3) {
+                newFormKind = 'workspace_tab'
+                formRoot = workspaceTab
+                break
+              }
             }
             await page.waitForTimeout(350)
           }
