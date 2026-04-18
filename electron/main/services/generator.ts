@@ -72,7 +72,7 @@ Rules (strict):
   (page.goto + waitForURL). The only case where App Launcher code is
   acceptable is a step that literally asserts App Launcher UI behaviour
   (e.g. "verify the App Launcher modal opens"). Generating
-  `getByRole('button', { name: 'App Launcher' })` will be rejected by
+  \`getByRole('button', { name: 'App Launcher' })\` will be rejected by
   the linter and cause a hard failure.
 - NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
 - NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
