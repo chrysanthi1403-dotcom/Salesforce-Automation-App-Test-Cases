@@ -32,6 +32,12 @@ export const IpcChannels = {
   runsStepsList: 'runs:stepsList',
   runsRevealEvidence: 'runs:revealEvidence',
 
+  // Calibration
+  calibrationGet: 'calibration:get',
+  calibrationStart: 'calibration:start',
+  calibrationProgress: 'calibration:progress',
+  calibrationClear: 'calibration:clear',
+
   // Misc
   appVersion: 'app:version'
 } as const

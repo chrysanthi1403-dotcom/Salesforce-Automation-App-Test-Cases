@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import type { LLMProvider } from './ai'
 import type { OrgMetadata } from './salesforce'
 import { summarizeMetadataForPrompt } from './salesforce'
+import { HELPER_FILENAME, HELPER_TEMPLATE } from './healing/helperTemplate'
+import { CalibrationService, summarizeCalibrationForPrompt } from './calibration'
 import type { OrgProfile, TestCase } from '../../../shared/types'
 
 const SYSTEM_PROMPT = `You are a senior Playwright + Salesforce QA engineer. Generate a single self-contained Playwright TypeScript spec that a non-technical user can watch execute in headed Chromium.
@@ -68,6 +70,37 @@ Rules (strict):
     await launcher.getByRole('link', { name: 'Contacts', exact: true }).click()
 - NEVER use hardcoded IDs that contain dynamic numbers (e.g. "#window_1-body").
 - NEVER use page.waitForTimeout with fixed ms — use expect.poll or waitFor({ state }).
+- SELF-HEALING WRAPPERS: alongside every generated spec there is a sibling
+  file \`_uat.ts\` that exports \`uat.click\`, \`uat.fill\`, and \`uat.visible\`.
+  These wrap a Playwright locator and, on failure, fall back to an AI
+  vision call that returns a new locator. USE THEM for risky user-visible
+  actions (any click or fill on a Lightning component) and provide a
+  short, human-readable \`description\` hint. Example:
+    import { uat } from './_uat'
+    await uat.click(
+      page,
+      page.getByRole('button', { name: 'New' }),
+      { description: 'Click the New button at the top-right of the Contacts list' }
+    )
+    await uat.fill(
+      page,
+      page.getByLabel('Last Name'),
+      'Smith',
+      { description: 'Fill the Last Name field in the New Contact modal' }
+    )
+    await uat.visible(
+      page,
+      page.getByRole('dialog', { name: 'New Contact' }),
+      { description: 'New Contact creation modal' }
+    )
+  Rules for \`description\`:
+    * Always a single sentence in plain English.
+    * Mention which page/modal the element lives in.
+    * Mention visible text / label / position (e.g. "top-right", "inside
+      the Details tab") when useful.
+  Continue to use raw \`expect(...)\` for URL / text assertions that don't
+  need healing, but wrap every click and fill that targets a user-visible
+  control through \`uat.click\` / \`uat.fill\`.
 - Wrap each logical step in test.step('N. action text', async () => { ... }).
 - For each step, take a screenshot named step-NN.png via page.screenshot.
 - For expected results, use expect(...) assertions derived from text content or toast messages.
@@ -140,15 +173,24 @@ function sanitizeFilename(input: string): string {
     .slice(0, 80)
 }
 
-function buildUserPrompt(tc: TestCase, metaSummary: string, org: OrgProfile): string {
-  return `ORG CONTEXT:
-Login URL: ${org.loginUrl}
-${metaSummary}
-
-TEST CASE JSON:
-${JSON.stringify(tc, null, 2)}
-
-Produce a single Playwright .spec.ts file that performs these steps end-to-end. Each step must be wrapped in test.step and take a screenshot. Assert expected results with expect(). Use Lightning-friendly locators.`
+function buildUserPrompt(
+  tc: TestCase,
+  metaSummary: string,
+  org: OrgProfile,
+  calibrationSummary: string
+): string {
+  const parts = [
+    'ORG CONTEXT:',
+    `Login URL: ${org.loginUrl}`,
+    metaSummary,
+    calibrationSummary,
+    '',
+    'TEST CASE JSON:',
+    JSON.stringify(tc, null, 2),
+    '',
+    'Produce a single Playwright .spec.ts file that performs these steps end-to-end. Each step must be wrapped in test.step and take a screenshot. Assert expected results with expect(). Use Lightning-friendly locators. For every click / fill on a visible control, use the `uat.click` / `uat.fill` helpers imported from `./_uat` with a descriptive `description` hint so the runtime can fall back to AI vision if the locator drifts.'
+  ]
+  return parts.filter(Boolean).join('\n')
 }
 
 export function stripCodeFences(text: string): string {
@@ -186,6 +228,8 @@ export function lintGeneratedSpec(code: string): string[] {
 export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpec[]> {
   mkdirSync(opts.outputDir, { recursive: true })
   const metaSummary = summarizeMetadataForPrompt(opts.metadata)
+  const calibration = CalibrationService.load(opts.org.id)
+  const calibrationSummary = summarizeCalibrationForPrompt(calibration)
   const results: GeneratedSpec[] = []
 
   const total = opts.testCases.length
@@ -195,7 +239,7 @@ export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpe
 
     const raw = await opts.provider.generate({
       system: SYSTEM_PROMPT,
-      prompt: buildUserPrompt(tc, metaSummary, opts.org),
+      prompt: buildUserPrompt(tc, metaSummary, opts.org, calibrationSummary),
       maxTokens: 6000,
       temperature: 0.15
     })
@@ -205,7 +249,7 @@ export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpe
       // retry once with explicit repair instructions
       const repaired = await opts.provider.generate({
         system: SYSTEM_PROMPT,
-        prompt: `Your previous spec had these issues: ${issues.join(' | ')}. Regenerate the full spec correcting ALL issues.\n\n${buildUserPrompt(tc, metaSummary, opts.org)}`,
+        prompt: `Your previous spec had these issues: ${issues.join(' | ')}. Regenerate the full spec correcting ALL issues.\n\n${buildUserPrompt(tc, metaSummary, opts.org, calibrationSummary)}`,
         maxTokens: 6000,
         temperature: 0.1
       })
@@ -233,6 +277,7 @@ export async function generateSpecs(opts: GenerateOptions): Promise<GeneratedSpe
 
 export function writeSupportFiles(outputDir: string, testCases: TestCase[]): void {
   mkdirSync(outputDir, { recursive: true })
+  writeFileSync(join(outputDir, HELPER_FILENAME), HELPER_TEMPLATE, 'utf8')
   writeFileSync(
     join(outputDir, 'playwright.config.ts'),
     `import { defineConfig } from '@playwright/test'

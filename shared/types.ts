@@ -128,16 +128,62 @@ export interface NewRunResponse {
   outputDir: string
 }
 
+export interface SelfHealingConfig {
+  /** Enable AI vision fallback when a deterministic Playwright locator fails. */
+  enabled: boolean
+  /** Safety cap to prevent runaway vision calls in a single test run. */
+  maxFallbacksPerRun: number
+}
+
 export interface AppSettings {
   ai: AIConfig
   slowMo: number
   headless: boolean
   theme: 'light' | 'dark' | 'system'
+  selfHealing: SelfHealingConfig
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   ai: { provider: 'anthropic', model: DEFAULT_MODELS.anthropic },
   slowMo: 250,
   headless: false,
-  theme: 'system'
+  theme: 'system',
+  selfHealing: { enabled: false, maxFallbacksPerRun: 6 }
+}
+
+/**
+ * A snapshot captured during a Calibrate session for a single Salesforce
+ * object, used as extra context for the generator.
+ */
+export interface CalibrationObjectSnapshot {
+  apiName: string
+  label: string
+  listUrl: string
+  listButtons: string[]
+  newFormTitle: string | null
+  fields: Array<{
+    label: string
+    type: string
+    required: boolean
+  }>
+}
+
+export interface OrgCalibration {
+  orgId: string
+  capturedAt: string
+  objects: CalibrationObjectSnapshot[]
+}
+
+export interface CalibrateRequest {
+  orgId: string
+  objects: string[]
+}
+
+export interface CalibrateProgress {
+  orgId: string
+  stage: 'login' | 'navigating' | 'capturing' | 'done' | 'error'
+  message: string
+  current?: number
+  total?: number
+  object?: string
 }

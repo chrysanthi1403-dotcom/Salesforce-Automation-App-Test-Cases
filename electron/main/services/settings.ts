@@ -8,7 +8,15 @@ export const SettingsService = {
     if (!existsSync(p)) return DEFAULT_SETTINGS
     try {
       const data = JSON.parse(readFileSync(p, 'utf8')) as Partial<AppSettings>
-      return { ...DEFAULT_SETTINGS, ...data, ai: { ...DEFAULT_SETTINGS.ai, ...(data.ai ?? {}) } }
+      return {
+        ...DEFAULT_SETTINGS,
+        ...data,
+        ai: { ...DEFAULT_SETTINGS.ai, ...(data.ai ?? {}) },
+        selfHealing: {
+          ...DEFAULT_SETTINGS.selfHealing,
+          ...(data.selfHealing ?? {})
+        }
+      }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -21,7 +29,8 @@ export const SettingsService = {
     const merged: AppSettings = {
       ...current,
       ...patch,
-      ai: { ...current.ai, ...(patch.ai ?? {}) }
+      ai: { ...current.ai, ...(patch.ai ?? {}) },
+      selfHealing: { ...current.selfHealing, ...(patch.selfHealing ?? {}) }
     }
     SettingsService.set(merged)
     return merged

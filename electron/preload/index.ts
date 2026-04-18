@@ -2,9 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IpcChannels } from '../../shared/ipc'
 import type {
   AppSettings,
+  CalibrateProgress,
+  CalibrateRequest,
   ImportSummary,
   NewRunRequest,
   NewRunResponse,
+  OrgCalibration,
   OrgCredentials,
   OrgProfile,
   PipelineProgress,
@@ -79,6 +82,19 @@ const api = {
       const handler = (_e: unknown, payload: RunProgress): void => cb(payload)
       ipcRenderer.on(IpcChannels.runsProgress, handler)
       return () => ipcRenderer.removeListener(IpcChannels.runsProgress, handler)
+    }
+  },
+  calibration: {
+    get: (orgId: string): Promise<OrgCalibration | null> =>
+      ipcRenderer.invoke(IpcChannels.calibrationGet, orgId),
+    start: (req: CalibrateRequest): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IpcChannels.calibrationStart, req),
+    clear: (orgId: string): Promise<{ ok: true }> =>
+      ipcRenderer.invoke(IpcChannels.calibrationClear, orgId),
+    onProgress: (cb: (p: CalibrateProgress) => void): Unsubscribe => {
+      const handler = (_e: unknown, payload: CalibrateProgress): void => cb(payload)
+      ipcRenderer.on(IpcChannels.calibrationProgress, handler)
+      return () => ipcRenderer.removeListener(IpcChannels.calibrationProgress, handler)
     }
   }
 }

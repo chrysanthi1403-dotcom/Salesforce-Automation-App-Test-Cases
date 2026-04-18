@@ -10,6 +10,7 @@ declare const require: NodeRequire
 const nodeRequire: NodeRequire = require
 import { RunsRepo, StepsRepo } from './history'
 import { SecretsService } from './secrets'
+import { SettingsService } from './settings'
 import { evidenceDir } from './paths'
 import { appBrowsersPath } from './browsers'
 import type {
@@ -151,6 +152,13 @@ export async function executeRun(
       : appNodeModules
     : existingNodePath
 
+  const settings = SettingsService.get()
+  const healingEnabled = !!settings.selfHealing?.enabled
+  let aiKey = ''
+  if (healingEnabled) {
+    aiKey = (await SecretsService.getApiKey(settings.ai.provider)) ?? ''
+  }
+
   const child = spawn(process.execPath, args, {
     cwd: opts.outputDir,
     env: {
@@ -165,7 +173,14 @@ export async function executeRun(
       SF_PASSWORD: creds.password,
       SF_SECURITY_TOKEN: creds.securityToken ?? '',
       SF_LOGIN_URL: opts.org.loginUrl,
-      PW_SLOW_MO: String(opts.slowMo)
+      PW_SLOW_MO: String(opts.slowMo),
+      // Self-healing (vision fallback) — read by the _uat.ts helper.
+      SF_AI_HEALING_ENABLED: healingEnabled && aiKey ? '1' : '0',
+      SF_AI_PROVIDER: settings.ai.provider,
+      SF_AI_MODEL: settings.ai.model,
+      SF_AI_VISION_MODEL: visionModelFor(settings.ai.provider, settings.ai.model),
+      SF_AI_API_KEY: aiKey,
+      SF_AI_MAX_FALLBACKS: String(settings.selfHealing?.maxFallbacksPerRun ?? 6)
     }
   })
 
@@ -219,6 +234,30 @@ export async function executeRun(
   summary.errorMessage =
     lastStatus === 'failed' ? buildFailureSummary(stdoutBuffer, stderrBuffer, exitCode) : null
   return summary
+}
+
+/**
+ * Map the user's authoring model to a vision-capable model for the same
+ * provider, since some authoring models (e.g. Gemini 2.5 flash) do support
+ * vision natively, but Anthropic/OpenAI users often configure non-vision
+ * text models. We fall back to a safe default per provider.
+ */
+function visionModelFor(
+  provider: 'anthropic' | 'gemini' | 'openai',
+  authorModel: string
+): string {
+  if (provider === 'anthropic') {
+    // Modern Claude Sonnet/Opus/Haiku all accept images.
+    if (/claude-(3|3-5|4|4-5|opus|sonnet|haiku)/i.test(authorModel)) return authorModel
+    return 'claude-sonnet-4-5'
+  }
+  if (provider === 'openai') {
+    if (/gpt-4o|gpt-4\.1|gpt-5|o1|o3|o4/i.test(authorModel)) return authorModel
+    return 'gpt-4o'
+  }
+  // Gemini 1.5+/2.x Flash & Pro all accept images.
+  if (/gemini-(1\.5|2|2\.5|exp)/i.test(authorModel)) return authorModel
+  return 'gemini-2.5-flash'
 }
 
 function buildFailureSummary(stdout: string, stderr: string, exitCode: number): string {

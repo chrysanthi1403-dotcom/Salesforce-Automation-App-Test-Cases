@@ -5,6 +5,8 @@ import { nanoid } from 'nanoid'
 import { IpcChannels } from '../../shared/ipc'
 import type {
   AppSettings,
+  CalibrateProgress,
+  CalibrateRequest,
   NewRunRequest,
   NewRunResponse,
   OrgCredentials,
@@ -18,6 +20,7 @@ import { SettingsService } from './services/settings'
 import { testConnection } from './services/salesforce'
 import { preparePipeline, runPipeline } from './services/pipeline'
 import { executeRun, prepareRun } from './services/runner'
+import { CalibrationService, calibrateOrg } from './services/calibration'
 
 type GetWindow = () => BrowserWindow | null
 
@@ -268,6 +271,35 @@ export function registerIpcHandlers(getWindow: GetWindow): void {
       })()
 
       return { runId: prepared.runId }
+    }
+  )
+
+  // --- Calibration ---
+  ipcMain.handle(IpcChannels.calibrationGet, (_evt, orgId: string) =>
+    CalibrationService.load(orgId)
+  )
+  ipcMain.handle(IpcChannels.calibrationClear, (_evt, orgId: string) => {
+    CalibrationService.clear(orgId)
+    return { ok: true }
+  })
+  ipcMain.handle(
+    IpcChannels.calibrationStart,
+    async (_evt, req: CalibrateRequest): Promise<{ ok: boolean }> => {
+      const org = OrgsRepo.get(req.orgId)
+      if (!org) throw new Error('Org not found')
+      const emit = (p: CalibrateProgress): void => {
+        sendToRenderer(IpcChannels.calibrationProgress, p)
+      }
+      void (async () => {
+        try {
+          await calibrateOrg({ org, objectApiNames: req.objects, onProgress: emit })
+        } catch (err) {
+          const message = (err as Error).message || String(err)
+          console.error('Calibration failed:', err)
+          emit({ orgId: req.orgId, stage: 'error', message })
+        }
+      })()
+      return { ok: true }
     }
   )
 }
