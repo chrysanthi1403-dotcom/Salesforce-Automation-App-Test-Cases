@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 440" font-family="Segoe UI, Arial, sans-serif" font-size="12">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="860" height="440" fill="#f8fafc"/>
+  <text x="430" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a">Data Model (SQLite · shared/types.ts)</text>
+
+  <!-- Org -->
+  <g>
+    <rect x="40" y="70" width="200" height="160" rx="8" fill="#fff" stroke="#0f766e"/>
+    <rect x="40" y="70" width="200" height="28" rx="8" fill="#99f6e4" stroke="#0f766e"/>
+    <text x="140" y="89" text-anchor="middle" font-weight="700" fill="#134e4a">OrgProfile</text>
+    <text x="52" y="116">id : string (PK)</text>
+    <text x="52" y="136">alias : string</text>
+    <text x="52" y="156">loginUrl : string</text>
+    <text x="52" y="176">username : string</text>
+    <text x="52" y="196">createdAt : ISO</text>
+    <text x="52" y="218" fill="#475569" font-size="11">creds → OS keychain</text>
+  </g>
+
+  <!-- Import -->
+  <g>
+    <rect x="310" y="70" width="230" height="160" rx="8" fill="#fff" stroke="#1d4ed8"/>
+    <rect x="310" y="70" width="230" height="28" rx="8" fill="#bfdbfe" stroke="#1d4ed8"/>
+    <text x="425" y="89" text-anchor="middle" font-weight="700" fill="#1e3a8a">ImportSummary</text>
+    <text x="322" y="116">id : string (PK)</text>
+    <text x="322" y="136">orgId : string (FK)</text>
+    <text x="322" y="156">excelPath : string</text>
+    <text x="322" y="176">importedAt : ISO</text>
+    <text x="322" y="196">testCaseCount : int</text>
+    <text x="322" y="216">outputDir : string</text>
+  </g>
+
+  <!-- Run -->
+  <g>
+    <rect x="610" y="70" width="210" height="200" rx="8" fill="#fff" stroke="#9333ea"/>
+    <rect x="610" y="70" width="210" height="28" rx="8" fill="#e9d5ff" stroke="#9333ea"/>
+    <text x="715" y="89" text-anchor="middle" font-weight="700" fill="#581c87">RunSummary</text>
+    <text x="622" y="116">id : string (PK)</text>
+    <text x="622" y="136">importId : string (FK)</text>
+    <text x="622" y="156">orgId : string (FK)</text>
+    <text x="622" y="176">testCaseId : string</text>
+    <text x="622" y="196">status : RunStatus</text>
+    <text x="622" y="216">startedAt : ISO</text>
+    <text x="622" y="236">finishedAt : ISO?</text>
+    <text x="622" y="256">evidenceDir : string</text>
+  </g>
+
+  <!-- RunStep -->
+  <g>
+    <rect x="610" y="300" width="210" height="120" rx="8" fill="#fff" stroke="#be185d"/>
+    <rect x="610" y="300" width="210" height="28" rx="8" fill="#fbcfe8" stroke="#be185d"/>
+    <text x="715" y="319" text-anchor="middle" font-weight="700" fill="#831843">RunStep</text>
+    <text x="622" y="346">id · runId (FK)</text>
+    <text x="622" y="366">order · action · expected</text>
+    <text x="622" y="386">actual · status</text>
+    <text x="622" y="406">screenshotPath</text>
+  </g>
+
+  <!-- TestSuite -->
+  <g>
+    <rect x="40" y="280" width="490" height="140" rx="8" fill="#fff" stroke="#b45309"/>
+    <rect x="40" y="280" width="490" height="28" rx="8" fill="#fde68a" stroke="#b45309"/>
+    <text x="285" y="299" text-anchor="middle" font-weight="700" fill="#78350f">TestSuite (in-memory → test-cases.json)</text>
+    <text x="52" y="326">TestSuite { testCases: TestCase[] }</text>
+    <text x="52" y="346">TestCase { id, title, preconditions?, steps[], postconditions? }</text>
+    <text x="52" y="366">TestStep { order, action, data?, expectedResult? }</text>
+    <text x="52" y="394" fill="#475569" font-style="italic" font-size="11">
+      produced by normalizer (LLM + Zod) · consumed by generator
+    </text>
+  </g>
+
+  <!-- Relations -->
+  <line x1="240" y1="150" x2="310" y2="150" stroke="#334155" stroke-width="1.5" marker-end="url(#a4)"/>
+  <text x="275" y="142" text-anchor="middle" font-size="10" fill="#475569">1..N</text>
+  <line x1="540" y1="150" x2="610" y2="150" stroke="#334155" stroke-width="1.5" marker-end="url(#a4)"/>
+  <text x="575" y="142" text-anchor="middle" font-size="10" fill="#475569">1..N</text>
+  <line x1="715" y1="270" x2="715" y2="300" stroke="#334155" stroke-width="1.5" marker-end="url(#a4)"/>
+  <text x="730" y="287" font-size="10" fill="#475569">1..N</text>
+</svg>

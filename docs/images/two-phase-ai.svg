@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" font-family="Segoe UI, Arial, sans-serif" font-size="12">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
+    </marker>
+  </defs>
+  <rect width="960" height="420" fill="#f8fafc"/>
+  <text x="480" y="32" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a">Two-Phase AI Design</text>
+  <text x="480" y="52" text-anchor="middle" font-size="12" fill="#475569">LLM at authoring time · deterministic Playwright at runtime · optional vision fallback</text>
+
+  <!-- Phase A: Authoring -->
+  <rect x="30" y="80" width="420" height="300" rx="14" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="240" y="108" text-anchor="middle" font-weight="700" fill="#1e3a8a" font-size="15">Phase A · Authoring (heavy AI)</text>
+  <text x="240" y="126" text-anchor="middle" fill="#1e3a8a" font-size="11">runs once per Excel import</text>
+
+  <rect x="60" y="145" width="165" height="44" rx="8" fill="#fff" stroke="#1d4ed8"/>
+  <text x="142" y="172" text-anchor="middle">Excel preview (headers+rows)</text>
+
+  <rect x="60" y="205" width="165" height="44" rx="8" fill="#fff" stroke="#1d4ed8"/>
+  <text x="142" y="232" text-anchor="middle">Salesforce metadata</text>
+
+  <rect x="260" y="175" width="165" height="80" rx="8" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="342" y="200" text-anchor="middle" font-weight="600">LLM (Claude/GPT/Gemini)</text>
+  <text x="342" y="220" text-anchor="middle" font-size="11">Stage 1 · normalize</text>
+  <text x="342" y="238" text-anchor="middle" font-size="11">Stage 2 · generate spec</text>
+
+  <line x1="225" y1="167" x2="260" y2="195" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="225" y1="227" x2="260" y2="220" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <rect x="60" y="275" width="365" height="44" rx="8" fill="#fff" stroke="#1d4ed8"/>
+  <text x="242" y="300" text-anchor="middle">deterministic .spec.ts (role/label/text locators)</text>
+
+  <line x1="342" y1="255" x2="242" y2="275" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <text x="240" y="342" text-anchor="middle" fill="#1e3a8a" font-size="11">Zod validates Stage 1 · lintGeneratedSpec validates Stage 2</text>
+  <text x="240" y="358" text-anchor="middle" fill="#1e3a8a" font-size="11">one repair retry on violation</text>
+
+  <!-- Phase B: Runtime -->
+  <rect x="480" y="80" width="450" height="300" rx="14" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="705" y="108" text-anchor="middle" font-weight="700" fill="#064e3b" font-size="15">Phase B · Runtime (no AI · optional vision)</text>
+  <text x="705" y="126" text-anchor="middle" fill="#064e3b" font-size="11">runs every time the user hits Run</text>
+
+  <rect x="510" y="145" width="165" height="44" rx="8" fill="#fff" stroke="#047857"/>
+  <text x="592" y="172" text-anchor="middle">Playwright · Chromium</text>
+
+  <rect x="705" y="145" width="200" height="44" rx="8" fill="#fff" stroke="#047857"/>
+  <text x="805" y="172" text-anchor="middle">_uat.ts helper (click/fill)</text>
+
+  <line x1="675" y1="167" x2="705" y2="167" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <rect x="510" y="210" width="395" height="44" rx="8" fill="#d1fae5" stroke="#047857"/>
+  <text x="707" y="236" text-anchor="middle" font-weight="600">✓ locator hits → proceed (no AI call)</text>
+
+  <rect x="510" y="270" width="395" height="44" rx="8" fill="#fef3c7" stroke="#b45309"/>
+  <text x="707" y="290" text-anchor="middle" font-weight="600" fill="#78350f">✗ locator drift → self-healing?</text>
+  <text x="707" y="306" text-anchor="middle" font-size="11" fill="#78350f">screenshot → vision model → retry×1</text>
+
+  <rect x="510" y="330" width="395" height="34" rx="8" fill="#fff" stroke="#047857"/>
+  <text x="707" y="351" text-anchor="middle" font-size="11">hard cap: maxFallbacksPerRun (default 6)</text>
+
+  <line x1="592" y1="189" x2="592" y2="210" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="592" y1="254" x2="592" y2="270" stroke="#0f172a" stroke-width="1.5" marker-end="url(#a2)"/>
+</svg>

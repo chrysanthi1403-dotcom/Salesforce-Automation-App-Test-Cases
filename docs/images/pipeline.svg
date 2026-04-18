@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 380" font-family="Segoe UI, Arial, sans-serif" font-size="12">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1e293b"/>
+    </marker>
+  </defs>
+  <rect width="960" height="380" fill="#f8fafc"/>
+  <text x="480" y="32" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a">Authoring Pipeline — Excel → Playwright Specs</text>
+
+  <!-- stages -->
+  <g>
+    <rect x="20" y="80" width="140" height="80" rx="10" fill="#dbeafe" stroke="#1d4ed8"/>
+    <text x="90" y="105" text-anchor="middle" font-weight="700" fill="#1e3a8a">1 · Parse Excel</text>
+    <text x="90" y="125" text-anchor="middle" fill="#1e3a8a">xlsx / csv / tsv</text>
+    <text x="90" y="142" text-anchor="middle" fill="#1e3a8a" font-size="11">excel.ts</text>
+  </g>
+  <g>
+    <rect x="180" y="80" width="140" height="80" rx="10" fill="#fce7f3" stroke="#be185d"/>
+    <text x="250" y="105" text-anchor="middle" font-weight="700" fill="#831843">2 · Normalize</text>
+    <text x="250" y="125" text-anchor="middle" fill="#831843">LLM · Zod validate</text>
+    <text x="250" y="142" text-anchor="middle" fill="#831843" font-size="11">normalizer.ts</text>
+  </g>
+  <g>
+    <rect x="340" y="80" width="140" height="80" rx="10" fill="#fef3c7" stroke="#b45309"/>
+    <text x="410" y="105" text-anchor="middle" font-weight="700" fill="#78350f">3 · Fetch Metadata</text>
+    <text x="410" y="125" text-anchor="middle" fill="#78350f">jsforce · objects/fields</text>
+    <text x="410" y="142" text-anchor="middle" fill="#78350f" font-size="11">salesforce.ts</text>
+  </g>
+  <g>
+    <rect x="500" y="80" width="140" height="80" rx="10" fill="#e0e7ff" stroke="#4338ca"/>
+    <text x="570" y="105" text-anchor="middle" font-weight="700" fill="#312e81">4 · Generate</text>
+    <text x="570" y="125" text-anchor="middle" fill="#312e81">LLM · spec per case</text>
+    <text x="570" y="142" text-anchor="middle" fill="#312e81" font-size="11">generator.ts</text>
+  </g>
+  <g>
+    <rect x="660" y="80" width="140" height="80" rx="10" fill="#fee2e2" stroke="#b91c1c"/>
+    <text x="730" y="105" text-anchor="middle" font-weight="700" fill="#7f1d1d">5 · Lint &amp; Repair</text>
+    <text x="730" y="125" text-anchor="middle" fill="#7f1d1d">guardrails · retry×1</text>
+    <text x="730" y="142" text-anchor="middle" fill="#7f1d1d" font-size="11">lintGeneratedSpec</text>
+  </g>
+  <g>
+    <rect x="820" y="80" width="120" height="80" rx="10" fill="#dcfce7" stroke="#15803d"/>
+    <text x="880" y="105" text-anchor="middle" font-weight="700" fill="#14532d">6 · Persist</text>
+    <text x="880" y="125" text-anchor="middle" fill="#14532d">write + SQLite</text>
+    <text x="880" y="142" text-anchor="middle" fill="#14532d" font-size="11">history.ts</text>
+  </g>
+
+  <!-- arrows -->
+  <line x1="160" y1="120" x2="180" y2="120" stroke="#1e293b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="320" y1="120" x2="340" y2="120" stroke="#1e293b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="480" y1="120" x2="500" y2="120" stroke="#1e293b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="640" y1="120" x2="660" y2="120" stroke="#1e293b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="800" y1="120" x2="820" y2="120" stroke="#1e293b" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Artefacts -->
+  <text x="480" y="200" text-anchor="middle" font-weight="700" fill="#0f172a">Artefacts per step</text>
+
+  <g>
+    <rect x="20" y="220" width="140" height="130" rx="10" fill="#fff" stroke="#1d4ed8"/>
+    <text x="90" y="242" text-anchor="middle" font-weight="600" fill="#1e3a8a">raw rows</text>
+    <text x="90" y="260" text-anchor="middle" font-size="11">sheets[] → cells[]</text>
+    <text x="90" y="280" text-anchor="middle" font-size="11">headers + 40 samples</text>
+  </g>
+  <g>
+    <rect x="180" y="220" width="140" height="130" rx="10" fill="#fff" stroke="#be185d"/>
+    <text x="250" y="242" text-anchor="middle" font-weight="600" fill="#831843">TestSuite</text>
+    <text x="250" y="260" text-anchor="middle" font-size="11">TestCase[]</text>
+    <text x="250" y="278" text-anchor="middle" font-size="11">TestStep[]</text>
+    <text x="250" y="296" text-anchor="middle" font-size="11">TC-IDs</text>
+  </g>
+  <g>
+    <rect x="340" y="220" width="140" height="130" rx="10" fill="#fff" stroke="#b45309"/>
+    <text x="410" y="242" text-anchor="middle" font-weight="600" fill="#78350f">Org metadata</text>
+    <text x="410" y="260" text-anchor="middle" font-size="11">top 30 objects ×</text>
+    <text x="410" y="278" text-anchor="middle" font-size="11">20 fields each</text>
+    <text x="410" y="296" text-anchor="middle" font-size="11">record types</text>
+  </g>
+  <g>
+    <rect x="500" y="220" width="140" height="130" rx="10" fill="#fff" stroke="#4338ca"/>
+    <text x="570" y="242" text-anchor="middle" font-weight="600" fill="#312e81">spec.ts</text>
+    <text x="570" y="260" text-anchor="middle" font-size="11">ESM · @playwright/test</text>
+    <text x="570" y="278" text-anchor="middle" font-size="11">role/label locators</text>
+    <text x="570" y="296" text-anchor="middle" font-size="11">test.step + screenshot</text>
+    <text x="570" y="314" text-anchor="middle" font-size="11">expect(...) per EXP</text>
+  </g>
+  <g>
+    <rect x="660" y="220" width="140" height="130" rx="10" fill="#fff" stroke="#b91c1c"/>
+    <text x="730" y="242" text-anchor="middle" font-weight="600" fill="#7f1d1d">lint report</text>
+    <text x="730" y="260" text-anchor="middle" font-size="11">checks: ESM / env /</text>
+    <text x="730" y="278" text-anchor="middle" font-size="11">timeouts / strict</text>
+    <text x="730" y="296" text-anchor="middle" font-size="11">if fail → repair pass</text>
+  </g>
+  <g>
+    <rect x="820" y="220" width="120" height="130" rx="10" fill="#fff" stroke="#15803d"/>
+    <text x="880" y="242" text-anchor="middle" font-weight="600" fill="#14532d">Import row</text>
+    <text x="880" y="260" text-anchor="middle" font-size="11">outputDir</text>
+    <text x="880" y="278" text-anchor="middle" font-size="11">_uat.ts</text>
+    <text x="880" y="296" text-anchor="middle" font-size="11">playwright.config</text>
+    <text x="880" y="314" text-anchor="middle" font-size="11">test-cases.json</text>
+  </g>
+</svg>
